@@ -1,0 +1,104 @@
+import os, json, sqlite3, threading
+from urllib.parse import urlparse
+
+_DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "seo_audits.db")
+DB_PATH = os.getenv("DB_PATH", _DEFAULT_DB)
+_local = threading.local()
+
+def _get_conn():
+    if not hasattr(_local,"conn") or _local.conn is None:
+        _local.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _local.conn.row_factory = sqlite3.Row
+    return _local.conn
+
+def _init_db():
+    conn = _get_conn()
+    conn.execute("""CREATE TABLE IF NOT EXISTS seo_audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        url TEXT NOT NULL, email TEXT NOT NULL, keyword TEXT,
+        domain TEXT, overall_score INTEGER, seo_score INTEGER, ai_score INTEGER,
+        overall_grade TEXT, fetch_time_ms INTEGER, error TEXT, full_report TEXT)""")
+    for col in ["keyword","ai_score","full_report"]:
+        try: conn.execute(f"ALTER TABLE seo_audits ADD COLUMN {col} TEXT")
+        except: pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_email ON seo_audits(email)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_domain ON seo_audits(domain)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON seo_audits(created_at DESC)")
+    conn.commit()
+_init_db()
+
+def _report_to_dict(report) -> dict:
+    def _mod(m):
+        if m is None: return None
+        checks = [{"name":c.name,"score":c.score,"max_score":c.max_score,
+                   "status":c.status,"found":c.found,"impact":c.impact,
+                   "how_to_fix":c.how_to_fix,"category":getattr(c,"category","SEO"),
+                   "details":getattr(c,"details",None)}
+                  for c in m.checks]
+        return {"module": m.module, "score": m.score, "checks": checks}
+    return {"url": report.url, "email": report.email, "keyword": report.keyword,
+            "fetch_time_ms": report.fetch_time_ms, "error": report.error,
+            "overall_score": report.overall_score, "seo_score": report.seo_score,
+            "ai_score": report.ai_score, "overall_grade": report.overall_grade,
+            "overall_color": report.overall_color,
+            "seo_module": _mod(report.seo_module),
+            "ai_module": _mod(report.ai_module),
+            "insights": report.insights}
+
+def save_audit(report):
+    try:
+        domain = urlparse(report.url).netloc.replace("www.","")
+        full_json = json.dumps(_report_to_dict(report), ensure_ascii=False)
+        conn = _get_conn()
+        cur = conn.execute("""INSERT INTO seo_audits
+            (url,email,keyword,domain,overall_score,seo_score,ai_score,overall_grade,fetch_time_ms,error,full_report)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (report.url, report.email, report.keyword, domain,
+             report.overall_score, report.seo_score, report.ai_score,
+             report.overall_grade, report.fetch_time_ms, report.error, full_json))
+        conn.commit()
+        return cur.lastrowid
+    except Exception as e:
+        print(f"[storage] insert failed: {e}"); return None
+
+def get_recent_audits(limit=100):
+    try:
+        rows = _get_conn().execute("""SELECT id,created_at,url,email,keyword,domain,
+            overall_score,seo_score,ai_score,overall_grade,fetch_time_ms,error
+            FROM seo_audits ORDER BY created_at DESC LIMIT ?""", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e: print(f"[storage] select failed: {e}"); return []
+
+def get_audit_by_id(audit_id):
+    try:
+        row = _get_conn().execute(
+            "SELECT full_report,created_at FROM seo_audits WHERE id=?", (audit_id,)).fetchone()
+        if row and row["full_report"]:
+            d = json.loads(row["full_report"]); d["saved_at"] = row["created_at"]; return d
+        return None
+    except Exception as e: print(f"[storage] get_by_id failed: {e}"); return None
+
+def get_stats():
+    try:
+        row = _get_conn().execute("""SELECT COUNT(*) AS total_audits,
+            COUNT(DISTINCT email) AS unique_leads, COUNT(DISTINCT domain) AS unique_domains,
+            ROUND(AVG(overall_score),1) AS avg_overall, ROUND(AVG(seo_score),1) AS avg_seo,
+            ROUND(AVG(ai_score),1) AS avg_ai,
+            SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS error_count
+            FROM seo_audits""").fetchone()
+        return dict(row) if row else {}
+    except: return {}
+
+def export_csv():
+    import csv, io
+    rows = get_recent_audits(10000)
+    if not rows: return ""
+    buf = io.StringIO()
+    csv.DictWriter(buf, fieldnames=rows[0].keys()).writeheader() or \
+    csv.DictWriter(buf, fieldnames=rows[0].keys()).writerows(rows)
+    # redo properly
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=rows[0].keys())
+    w.writeheader(); w.writerows(rows)
+    return buf.getvalue()
