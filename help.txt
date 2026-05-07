@@ -1,0 +1,24 @@
+seoaudit
+
+conda activate seoaudit
+
+
+
+
+fine, sounds good. Need to update the app.
+
+1. Need a detailed audit report for all the issues/errors, suggestions how to fix them,etc. 
+
+Provide the complete details in the detailed audit report, just like you have done in the console app.
+
+need to save all the audit reports for further checks.
+
+
+
+
+
+-------------------------------------------------------
+
+pip install requests beautifulsoup4 lxml textstat validators python-dotenv --break-system-packages -q 2>&1 | tail -3
+
+--------------------------------------------------------
