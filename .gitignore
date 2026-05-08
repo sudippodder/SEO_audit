@@ -8,7 +8,6 @@ user_auth.db
 # Output files
 outputs/
 *.log
-*.txt
 # OS / Editor files
 .DS_Store
 Thumbs.db

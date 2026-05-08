@@ -482,7 +482,7 @@ def check_heading_structure(page, kw=None):
 def check_alt_tags_present(page, kw=None):
     imgs = page.images
     if not imgs:
-        return CheckResult("All images have alt tags", 3, 3, "pass",
+        return CheckResult("Image alt Text", 3, 3, "pass",
             "No images found on this page — not applicable.",
             "N/A", "No action needed.")
     with_alt = page.images_with_alt
@@ -498,17 +498,17 @@ def check_alt_tags_present(page, kw=None):
         details.append(f"Missing alt tag for image <strong>{src}</strong><br><code style='color:#c84b2f; background:transparent; padding:0;'>{tag_str}</code>")
 
     if pct == 100:
-        return CheckResult("All images have alt tags", 3, 3, "pass",
+        return CheckResult("Image alt Text", 3, 3, "pass",
             f"All {len(imgs)} images have alt text.",
             "Full alt coverage supports accessibility and image search visibility.",
             "No action needed.")
     if pct >= 70:
-        return CheckResult("All images have alt tags", 2, 3, "warn",
+        return CheckResult("Image alt Text", 2, 3, "warn",
             f"Some image tags are missing alt attributes ({len(with_alt)}/{len(imgs)} have alt, {pct:.0f}%).",
             "Missing alt tags reduce accessibility and image search traffic.",
             "Add descriptive alt text to all images. Include keyword where contextually appropriate.",
             details=details)
-    return CheckResult("All images have alt tags", 0, 3, "fail",
+    return CheckResult("Image alt Text", 0, 3, "fail",
         f"Only {len(with_alt)}/{len(imgs)} images have alt tags ({pct:.0f}%). Most images are missing alt attributes.",
         "Poor alt coverage is both an accessibility violation and a significant SEO gap.",
         "Add alt attributes to all images. Format: alt='descriptive phrase with keyword if relevant'",
@@ -733,17 +733,17 @@ def check_indexability(page, kw=None):
 
 def check_faq(page, kw=None):
     if page.has_faq_schema:
-        return CheckResult("FAQs found", 3, 3, "pass",
+        return CheckResult("FAQs", 3, 3, "pass",
             "FAQPage schema markup detected — structured FAQ content found.",
             "FAQ schema enables People Also Ask boxes and AI answer panel inclusion.",
             "No action needed. Ensure answers are concise (under 100 words each).")
     if page.has_faq_section:
-        return CheckResult("FAQs found", 2, 3, "warn",
+        return CheckResult("FAQs", 2, 3, "warn",
             "FAQ section detected in content but no FAQPage schema markup found.",
             "Without schema, FAQ content won't appear in structured rich results.",
             "Add FAQPage JSON-LD schema to your existing FAQ section. Validate at Google Rich Results Test.")
     kw_label = f" for '{kw}'" if kw else ""
-    return CheckResult("FAQs found", 0, 3, "fail",
+    return CheckResult("FAQs", 0, 3, "fail",
         f"No explicit FAQ schema or dedicated FAQ section was found{kw_label}.",
         "FAQ sections are a top signal for AI answer panels and People Also Ask features.",
         "Add a FAQ section with 4–6 Q&A pairs at the bottom of the page. Implement FAQPage schema in JSON-LD.")

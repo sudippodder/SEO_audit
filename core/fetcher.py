@@ -133,7 +133,7 @@ def _populate(page, soup, base_url):
         href = urljoin(base_url, a["href"])
         text = a.get_text(strip=True)
         if text: page.anchor_texts.append(text)
-        if urlparse(href).netloc == base_domain:
+        if urlparse(href).netloc.replace("www.", "") == page.domain:
             page.internal_links.append(href)
         elif href.startswith("http"):
             page.external_links.append(href)
