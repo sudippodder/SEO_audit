@@ -1,4 +1,4 @@
-"""app.py — AI SEO Audit Tool  |  streamlit run app.py"""
+"""app.py — AI GEO Audit Tool  |  streamlit run app.py"""
 import os, time, json, validators
 import streamlit as st
 from dotenv import load_dotenv
@@ -7,8 +7,10 @@ load_dotenv()
 
 from core import run_audit
 from utils.storage import save_audit, get_recent_audits, get_audit_by_id, get_stats, export_csv, _report_to_dict
+from utils.storage import create_user, get_user_by_email, update_user_password, get_all_users, update_user_role, delete_user
+from utils.auth import hash_password, verify_password, generate_temp_password, send_forgot_password_email
 
-st.set_page_config(page_title="AI SEO Audit", page_icon="🔍", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="GEO Readiness Audit", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -115,24 +117,29 @@ def validate(url, email):
 
 def render_banner(data, domain):
     s = data["overall_score"]; sc = data.get("seo_score",0); ai = data.get("ai_score",0)
+    geo = data.get("geo_report",{}); geo_score = geo.get("geo_score",0) if geo else 0
     grade = data["overall_grade"]; color = gc(s)
     saved = f" · Saved {data['saved_at']}" if data.get("saved_at") else ""
     kw_tag = f" · Keyword: <em>{data.get('keyword','')}</em>" if data.get("keyword") else ""
     st.markdown(f"""
     <div class="score-banner">
       <div>
-        <div class="score-eye">Total Score</div>
+        <div class="score-eye">Overall Score</div>
         <div class="score-big">{s}</div>
         <div class="score-eye">out of 100</div>
       </div>
       <div class="score-pair">
         <div class="score-pill-box">
-          <div class="pill-num sg-{'r' if sc<=40 else 'a' if sc<=70 else 'g'}">{sc}</div>
-          <div class="pill-label">SEO Score</div>
+          <div class="pill-num sg-{'r' if geo_score<=40 else 'a' if geo_score<=70 else 'g'}">{geo_score}</div>
+          <div class="pill-label">GEO Score</div>
         </div>
         <div class="score-pill-box">
           <div class="pill-num sg-{'r' if ai<=40 else 'a' if ai<=70 else 'g'}">{ai}</div>
           <div class="pill-label">AI Score</div>
+        </div>
+        <div class="score-pill-box">
+          <div class="pill-num sg-{'r' if sc<=40 else 'a' if sc<=70 else 'g'}">{sc}</div>
+          <div class="pill-label">SEO Score</div>
         </div>
       </div>
       <div class="score-right">
@@ -171,18 +178,80 @@ def render_check_cards(checks):
           {details_html}
         </div>""", unsafe_allow_html=True)
 
+GEO_MODULES = [
+    ("citation_readiness",  "🤖 AI Citation Readiness"),
+    ("entity_clarity",      "🏢 Brand / Entity Clarity"),
+    ("extractability",      "⚡ AI Extractability"),
+    ("trust_signals",       "🛡️ AI Trust Signals"),
+    ("overview_readiness",  "📋 AI Overview Readiness"),
+    ("information_gain",    "💡 Information Gain / Originality"),
+]
+
+def _all_geo_checks(geo):
+    """Flatten all checks from all 6 GEO modules."""
+    out = []
+    for key, _ in GEO_MODULES:
+        mod = geo.get(key, {})
+        out.extend(mod.get("checks", []))
+    return out
+
+def render_geo_modules(geo):
+    """Render each of the 6 GEO module expanders."""
+    for key, label in GEO_MODULES:
+        mod = geo.get(key, {})
+        if not mod:
+            continue
+        checks = mod.get("checks", [])
+        score  = mod.get("score", 0)
+        fails  = sum(1 for c in checks if c["status"] == "fail")
+        warns  = sum(1 for c in checks if c["status"] == "warn")
+        passes = sum(1 for c in checks if c["status"] == "pass")
+        sorted_c = sorted(checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
+        header = f"{label}: {score}/100  ·  ❌ {fails}  ·  ⚠️ {warns}  ·  ✅ {passes}"
+        # Expand modules with fails automatically
+        with st.expander(header, expanded=(fails > 0)):
+            t_all, t_fail, t_warn, t_pass = st.tabs(["All", "Failed", "Warnings", "Passed"])
+            with t_all:  render_check_cards(sorted_c)
+            with t_fail: render_check_cards([c for c in sorted_c if c["status"]=="fail"])
+            with t_warn: render_check_cards([c for c in sorted_c if c["status"]=="warn"])
+            with t_pass: render_check_cards([c for c in sorted_c if c["status"]=="pass"])
+
+def render_geo_opportunity(opp):
+    """Render the GEO Opportunity Score section."""
+    if not opp:
+        return
+    gap  = opp.get("gap_score", 0)
+    score = opp.get("score", 0)
+    checks = opp.get("checks", [])
+    color = "#c84b2f" if gap >= 50 else ("#c8962f" if gap >= 25 else "#2a8a5e")
+    st.markdown(f"""
+    <div style="background:#0d0d0d;border-radius:10px;padding:1.4rem 1.8rem;margin-bottom:1rem;">
+      <div style="font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.45);margin-bottom:4px;">GEO Opportunity Gap</div>
+      <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
+        <div style="font-family:'Syne',sans-serif;font-size:3rem;font-weight:800;color:{color};line-height:1;">{gap}<span style="font-size:1.4rem;opacity:.6;">/100</span></div>
+        <div style="color:rgba(255,255,255,.7);font-size:.88rem;max-width:480px;line-height:1.6;">
+          A gap score of <strong style="color:{color};">{gap}</strong> means your website is missing significant AI visibility opportunities.
+          The lower your GEO score, the greater the opportunity for improvement.
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+    sorted_opp = sorted(checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
+    render_check_cards(sorted_opp)
+
 def render_full_report(data):
     url = data.get("url",""); domain = urlparse(url).netloc.replace("www.","")
-    seo_mod = data.get("seo_module",{}); ai_mod = data.get("ai_module",{})
+    seo_mod = data.get("seo_module",{})
+    geo = data.get("geo_report",{})
     error = data.get("error")
     if error:
         st.error(f"**Audit error:** {error}"); return
 
     render_banner(data, domain)
 
+    # ── Key Insights + Audit Summary ─────────────────────────────────────────
     left, right = st.columns([3, 2])
     with left:
-        st.markdown('<div class="sec-label">Key Insights</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sec-label">Key AI/GEO Insights</div>', unsafe_allow_html=True)
         for ins in data.get("insights",[]):
             st.markdown(f"""
             <div class="ins-card">
@@ -196,10 +265,12 @@ def render_full_report(data):
 
     with right:
         st.markdown('<div class="sec-label">Audit Summary</div>', unsafe_allow_html=True)
-        all_checks = (seo_mod.get("checks",[]) if seo_mod else []) + (ai_mod.get("checks",[]) if ai_mod else [])
-        total = len(all_checks)
-        fails = sum(1 for c in all_checks if c["status"]=="fail")
-        warns = sum(1 for c in all_checks if c["status"]=="warn")
+        geo_checks_all = _all_geo_checks(geo) if geo else []
+        seo_checks_all = seo_mod.get("checks",[]) if seo_mod else []
+        all_checks = geo_checks_all + seo_checks_all
+        total  = len(all_checks)
+        fails  = sum(1 for c in all_checks if c["status"]=="fail")
+        warns  = sum(1 for c in all_checks if c["status"]=="warn")
         passes = sum(1 for c in all_checks if c["status"]=="pass")
         for label, val, col in [
             ("Total checks run", total, "#0d0d0d"),
@@ -215,62 +286,145 @@ def render_full_report(data):
         ft = data.get("fetch_time_ms", 0)
         st.markdown(f'<div style="text-align:center;font-size:11px;color:#9a9285;margin-top:8px;">Fetched in {ft}ms</div>', unsafe_allow_html=True)
 
-    # SEO Checks
-    st.markdown('<div class="sec-label">SEO Score — Detailed Report</div>', unsafe_allow_html=True)
+    # ── GEO Readiness — 6 modules ─────────────────────────────────────────────
+    st.markdown('<div class="sec-label">GEO Readiness — Detailed Report</div>', unsafe_allow_html=True)
+    if geo:
+        render_geo_modules(geo)
+
+        # GEO Opportunity Score
+        st.markdown('<div class="sec-label">GEO Opportunity Score</div>', unsafe_allow_html=True)
+        render_geo_opportunity(geo.get("geo_opportunity",{}))
+    else:
+        st.info("GEO report not available for this audit. Re-run the audit to generate GEO scores.")
+
+    # ── Traditional SEO Signals (collapsed by default) ────────────────────────
+    st.markdown('<div class="sec-label">Traditional SEO Signals</div>', unsafe_allow_html=True)
     if seo_mod:
         seo_checks = seo_mod.get("checks", [])
         seo_fails  = sum(1 for c in seo_checks if c["status"]=="fail")
         seo_warns  = sum(1 for c in seo_checks if c["status"]=="warn")
         seo_passes = sum(1 for c in seo_checks if c["status"]=="pass")
         sorted_seo = sorted(seo_checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
-        with st.expander(f"📊 SEO Score: {seo_mod['score']}/100  ·  ❌ {seo_fails} failed  ·  ⚠️ {seo_warns} warnings  ·  ✅ {seo_passes} passed", expanded=True):
-            # Filter tabs
+        with st.expander(f"📊 SEO Score: {seo_mod['score']}/100  ·  ❌ {seo_fails} failed  ·  ⚠️ {seo_warns} warnings  ·  ✅ {seo_passes} passed", expanded=False):
             tab_all, tab_fail, tab_warn, tab_pass = st.tabs(["All", "Failed", "Warnings", "Passed"])
-            with tab_all:   render_check_cards(sorted_seo)
-            with tab_fail:  render_check_cards([c for c in sorted_seo if c["status"]=="fail"])
-            with tab_warn:  render_check_cards([c for c in sorted_seo if c["status"]=="warn"])
-            with tab_pass:  render_check_cards([c for c in sorted_seo if c["status"]=="pass"])
+            with tab_all:  render_check_cards(sorted_seo)
+            with tab_fail: render_check_cards([c for c in sorted_seo if c["status"]=="fail"])
+            with tab_warn: render_check_cards([c for c in sorted_seo if c["status"]=="warn"])
+            with tab_pass: render_check_cards([c for c in sorted_seo if c["status"]=="pass"])
 
-    # AI Checks
-    st.markdown('<div class="sec-label">AI Score — Detailed Report</div>', unsafe_allow_html=True)
-    if ai_mod:
-        ai_checks = ai_mod.get("checks", [])
-        ai_fails  = sum(1 for c in ai_checks if c["status"]=="fail")
-        ai_warns  = sum(1 for c in ai_checks if c["status"]=="warn")
-        ai_passes = sum(1 for c in ai_checks if c["status"]=="pass")
-        sorted_ai = sorted(ai_checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
-        with st.expander(f"🤖 AI Score: {ai_mod['score']}/100  ·  ❌ {ai_fails} failed  ·  ⚠️ {ai_warns} warnings  ·  ✅ {ai_passes} passed", expanded=True):
-            tab_all, tab_fail, tab_warn, tab_pass = st.tabs(["All", "Failed", "Warnings", "Passed"])
-            with tab_all:   render_check_cards(sorted_ai)
-            with tab_fail:  render_check_cards([c for c in sorted_ai if c["status"]=="fail"])
-            with tab_warn:  render_check_cards([c for c in sorted_ai if c["status"]=="warn"])
-            with tab_pass:  render_check_cards([c for c in sorted_ai if c["status"]=="pass"])
-
-    # CTA
+    # ── CTA ───────────────────────────────────────────────────────────────────
     st.markdown("""
     <div class="cta-block">
       <div class="cta-eye">Want expert help?</div>
-      <div class="cta-h">Get your complete AI SEO report</div>
-      <div class="cta-s">This free audit shows the issues. Our full service includes keyword gap analysis, competitor benchmarking, content rewrites, and a 30-day implementation plan.</div>
+      <div class="cta-h">Get your complete GEO Readiness report</div>
+      <div class="cta-s">This free audit highlights the gaps. Our full service includes AI content restructuring, entity clarity optimisation, trust signal building, and a GEO implementation plan tailored to your site.</div>
     </div>""", unsafe_allow_html=True)
     st.markdown("")
     c1, c2, c3 = st.columns(3)
-    with c1: st.button("📋  Get Full AI SEO Report", type="primary", use_container_width=True, key=f"cta1_{url[:15]}")
+    with c1: st.button("📋  Get Full GEO Report", type="primary", use_container_width=True, key=f"cta1_{url[:15]}")
     with c2: st.button("📩  Request Detailed Audit", type="secondary", use_container_width=True, key=f"cta2_{url[:15]}")
     with c3:
         st.download_button("⬇️  Download Report JSON",
             data=json.dumps(data, indent=2, ensure_ascii=False),
-            file_name=f"seo_audit_{domain}.json", mime="application/json",
+            file_name=f"geo_audit_{domain}.json", mime="application/json",
             use_container_width=True, key=f"dl_{url[:15]}")
 
 # ── Session state ─────────────────────────────────────────────────────────────
-for k,v in [("report",None),("show_results",False),("view_saved",None)]:
+for k,v in [("report",None),("show_results",False),("view_saved",None), ("user", None), ("view_admin", False)]:
     if k not in st.session_state: st.session_state[k] = v
+
+# ── AUTHENTICATION ────────────────────────────────────────────────────────────
+if not st.session_state.user:
+    st.markdown('<div class="hero-badge">Welcome to AI SEO Audit</div>', unsafe_allow_html=True)
+    st.markdown('<h1 class="hero-title">Please <em>Login</em> or <em>Register</em></h1>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["Login", "Register", "Forgot Password"])
+    
+    with tab1:
+        st.subheader("Login")
+        l_email = st.text_input("Email", key="l_email")
+        l_pwd = st.text_input("Password", type="password", key="l_pwd")
+        if st.button("Login", type="primary"):
+            user = get_user_by_email(l_email)
+            if user and verify_password(l_pwd, user["password_hash"]):
+                st.session_state.user = user
+                st.success("Logged in successfully!")
+                st.rerun()
+            else:
+                st.error("Invalid email or password.")
+                
+    with tab2:
+        st.subheader("Register")
+        r_email = st.text_input("Email", key="r_email")
+        r_pwd = st.text_input("Password", type="password", key="r_pwd")
+        r_pwd2 = st.text_input("Confirm Password", type="password", key="r_pwd2")
+        if st.button("Register", type="primary"):
+            if r_pwd != r_pwd2:
+                st.error("Passwords do not match.")
+            elif not validators.email(r_email):
+                st.error("Invalid email address.")
+            elif len(r_pwd) < 6:
+                st.error("Password must be at least 6 characters.")
+            else:
+                uid = create_user(r_email, hash_password(r_pwd))
+                if uid:
+                    st.success("Registration successful! Please login.")
+                else:
+                    st.error("Email already exists.")
+                    
+    with tab3:
+        st.subheader("Forgot Password")
+        f_email = st.text_input("Email", key="f_email")
+        if st.button("Reset Password"):
+            user = get_user_by_email(f_email)
+            if user:
+                temp_pwd = generate_temp_password()
+                update_user_password(f_email, hash_password(temp_pwd))
+                if send_forgot_password_email(f_email, temp_pwd):
+                    st.success("A temporary password has been sent to your email. (Check console if SMTP not configured)")
+                else:
+                    st.error("Failed to send email.")
+            else:
+                st.error("Email not found.")
+    st.stop()
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    u = st.session_state.user
+    st.markdown(f"### 👤 {u['email']}")
+    st.markdown(f"**Role:** {u['role'].capitalize()}")
+    
+    with st.expander("⚙️ Profile / Settings"):
+        npwd = st.text_input("New Password", type="password", key="p_new")
+        if st.button("Update Password"):
+            if len(npwd) >= 6:
+                update_user_password(u['email'], hash_password(npwd))
+                st.success("Password updated!")
+            else:
+                st.error("Password too short.")
+        if st.button("Logout", use_container_width=True):
+            st.session_state.user = None
+            st.rerun()
+            
+    st.divider()
+    
+    if u['role'] == 'admin':
+        if st.button("👑 Admin Dashboard", use_container_width=True):
+            st.session_state.view_admin = True
+            st.session_state.show_results = False
+            st.session_state.view_saved = None
+            st.session_state.report = None
+            st.rerun()
+        if st.session_state.get('view_admin'):
+            if st.button("← Back to Audits", use_container_width=True):
+                st.session_state.view_admin = False
+                st.rerun()
+        st.divider()
+
+    filter_email = None if u['role'] == 'admin' else u['email']
+
     st.markdown("### 🗄️ Audit History")
-    stats = get_stats()
+    stats = get_stats(email=filter_email)
     if stats:
         c1,c2 = st.columns(2)
         c1.metric("Audits",  stats.get("total_audits",0))
@@ -278,7 +432,7 @@ with st.sidebar:
         c1.metric("Domains", stats.get("unique_domains",0))
         c2.metric("Avg",     stats.get("avg_overall","—"))
     st.divider()
-    rows = get_recent_audits(limit=60)
+    rows = get_recent_audits(limit=60, email=filter_email)
     if rows:
         for r in rows:
             s = r.get("overall_score") or 0
@@ -302,6 +456,30 @@ with st.sidebar:
         if st.button("← New audit", use_container_width=True):
             st.session_state.show_results=False; st.session_state.report=None; st.session_state.view_saved=None; st.rerun()
 
+# ── ADMIN DASHBOARD ───────────────────────────────────────────────────────────
+if st.session_state.get('view_admin') and st.session_state.user['role'] == 'admin':
+    st.markdown('<div class="hero-badge">Admin Dashboard</div>', unsafe_allow_html=True)
+    st.markdown('<h1 class="hero-title">Manage <em>Users</em></h1>', unsafe_allow_html=True)
+    
+    users = get_all_users()
+    if users:
+        for user in users:
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+            col1.write(f"**{user['email']}**")
+            col2.write(f"Joined: {user['created_at'][:10]}")
+            
+            new_role = col3.selectbox("Role", ["user", "admin"], index=0 if user['role']=='user' else 1, key=f"role_{user['email']}")
+            if new_role != user['role']:
+                update_user_role(user['email'], new_role)
+                st.rerun()
+                
+            if user['email'] != st.session_state.user['email']:
+                if col4.button("Delete", key=f"del_{user['email']}"):
+                    delete_user(user['email'])
+                    st.rerun()
+            st.markdown("---")
+    st.stop()
+
 # ── SAVED AUDIT VIEW ──────────────────────────────────────────────────────────
 if st.session_state.view_saved:
     data = get_audit_by_id(st.session_state.view_saved)
@@ -314,17 +492,17 @@ if st.session_state.view_saved:
     st.stop()
 
 # ── HERO + FORM ───────────────────────────────────────────────────────────────
-if not st.session_state.show_results:
-    st.markdown('<div class="hero-badge">Free AI SEO Audit</div>', unsafe_allow_html=True)
+if not st.session_state.show_results and not st.session_state.get('view_admin'):
+    st.markdown('<div class="hero-badge">Free GEO Readiness Audit</div>', unsafe_allow_html=True)
     st.markdown("""
-    <h1 class="hero-title">How visible are you to <em>AI search?</em></h1>
-    <p class="hero-sub">Enter your URL and target keyword for a full audit — SEO score + AI visibility score with detailed fix instructions for every issue.</p>
+    <h1 class="hero-title">Is your website <em>AI citation ready?</em></h1>
+    <p class="hero-sub">Enter your URL for a full GEO audit — AI Citation Readiness, Brand Entity Clarity, Extractability, Trust Signals, AI Overview Readiness, and Information Gain scores with actionable fix instructions.</p>
     """, unsafe_allow_html=True)
     st.markdown("---")
 
     col_u, col_e = st.columns(2)
     with col_u: url_input = st.text_input("Website URL", placeholder="https://yourwebsite.com")
-    with col_e: email_input = st.text_input("Your Email *(required)*", placeholder="you@company.com")
+    with col_e: email_input = st.text_input("Your Email *(required)*", value=st.session_state.user['email'], placeholder="you@company.com")
     kw_input = st.text_input("Target Keyword *(recommended — e.g. 'best python seo tools')*",
                               placeholder="Enter your primary target keyword for deeper analysis")
 
@@ -340,8 +518,8 @@ if not st.session_state.show_results:
             norm_url = url_input if url_input.startswith("http") else "https://"+url_input
             prog = st.progress(0); txt = st.empty()
             steps = [(12,"Fetching page content…"),(28,"Parsing HTML structure…"),
-                     (48,"Analysing SEO signals…"),(65,"Evaluating keyword usage…"),
-                     (80,"Checking AI visibility…"),(92,"Calculating scores…")]
+                     (48,"Analysing SEO signals…"),(65,"Evaluating AI citation readiness…"),
+                     (80,"Scoring GEO readiness modules…"),(92,"Calculating scores…")]
             for pct, msg in steps:
                 txt.markdown(f"**{msg}**"); prog.progress(pct); time.sleep(0.3)
             report = run_audit(norm_url, email_input, kw_input.strip())
@@ -360,6 +538,6 @@ if st.session_state.show_results and st.session_state.report:
         st.error(f"**Could not audit:** {report.error}")
         if st.button("← Try again"): st.session_state.show_results=False; st.session_state.report=None; st.rerun()
         st.stop()
-    st.markdown(f'<div class="hero-badge">Audit Complete — {domain}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero-badge">GEO Audit Complete — {domain}</div>', unsafe_allow_html=True)
     render_full_report(_report_to_dict(report))
-    st.markdown(f'<div style="text-align:center;margin-top:1.5rem;font-size:11px;color:#9a9285;">Audited <strong>{domain}</strong> · Scoring is heuristic-based · Results for guidance only</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="text-align:center;margin-top:1.5rem;font-size:11px;color:#9a9285;">Audited <strong>{domain}</strong> · GEO scoring is heuristic-based · Results for guidance only</div>', unsafe_allow_html=True)
