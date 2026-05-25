@@ -54,6 +54,29 @@ class ParsedPage:
     related_keywords_found: List[str] = field(default_factory=list)
     trusted_external_links: int = 0
     has_voice_search_qa: bool = False
+    # ── NEW: AI Crawlability & Schema Depth ───────────────────────────────
+    has_llms_txt: bool = False
+    robots_ai_directives: dict = field(default_factory=dict)  # {"GPTBot": "allowed"|"blocked"}
+    page_render_type: str = "unknown"           # static | ssr-likely | js-heavy
+    schema_raw: list = field(default_factory=list)  # full JSON-LD objects
+    organization_schema: dict = field(default_factory=dict)
+    has_author_schema: bool = False
+    has_breadcrumb_schema: bool = False
+    has_service_schema: bool = False
+    has_howto_article_schema: bool = False
+    same_as_links: List[str] = field(default_factory=list)
+    # ── NEW: Entity & Knowledge Graph ─────────────────────────────────────
+    external_entity_links: dict = field(default_factory=dict)  # {"Wikipedia": url, ...}
+    nap_phone: str = ""
+    nap_address: str = ""
+    schema_nap: dict = field(default_factory=dict)
+    # ── NEW: Content Quality & LLM Readability ────────────────────────────
+    date_modified: str = ""
+    statistics_count: int = 0
+    quotable_sentence_count: int = 0
+    social_links: dict = field(default_factory=dict)     # {"linkedin": url, ...}
+    review_platform_links: dict = field(default_factory=dict)  # {"G2": url, ...}
+    press_mention_links: List[str] = field(default_factory=list)
 
 def fetch(url: str) -> "ParsedPage":
     if not url.startswith(("http://", "https://")):
@@ -77,12 +100,20 @@ def fetch(url: str) -> "ParsedPage":
         page_size_kb=round(len(resp.content)/1024,1), status_code=resp.status_code,
         is_https=resp.url.startswith("https://"), final_url=resp.url)
     _populate(page, soup, resp.url)
-    # Try robots.txt
+    base = f"{urlparse(resp.url).scheme}://{urlparse(resp.url).netloc}"
+    # robots.txt — AI directives + sitemap
     try:
-        rr = requests.get(f"{urlparse(resp.url).scheme}://{urlparse(resp.url).netloc}/robots.txt",
-                          headers=HEADERS, timeout=5)
-        page.has_robots_txt = rr.status_code == 200
-        page.has_xml_sitemap = "sitemap" in rr.text.lower() if page.has_robots_txt else False
+        rr = requests.get(f"{base}/robots.txt", headers=HEADERS, timeout=5)
+        if rr.status_code == 200:
+            page.has_robots_txt = True
+            rt = rr.text
+            page.has_xml_sitemap = "sitemap" in rt.lower()
+            page.robots_ai_directives = _parse_ai_directives(rt)
+    except: pass
+    # llms.txt
+    try:
+        lr = requests.get(f"{base}/llms.txt", headers=HEADERS, timeout=5)
+        page.has_llms_txt = (lr.status_code == 200 and len(lr.text) > 10)
     except: pass
     return page
 
@@ -194,3 +225,154 @@ def _populate(page, soup, base_url):
         import textstat
         page.readability_score = textstat.flesch_reading_ease(page.full_text) if len(page.full_text.split()) > 50 else 0
     except: page.readability_score = 0
+
+    # ── Schema (deep) ──────────────────────────────────────────────────────
+    _extract_schema_signals(page, soup)
+
+    # ── Entity links ───────────────────────────────────────────────────────
+    _extract_entity_links(page)
+
+    # ── Content quality signals ────────────────────────────────────────────
+    _extract_content_quality(page, soup)
+
+    # ── JS render type ─────────────────────────────────────────────────────
+    _detect_render_type(page)
+
+
+def _parse_ai_directives(robots_txt: str) -> dict:
+    """Parse robots.txt for known AI bot directives."""
+    AI_BOTS = ["GPTBot", "ClaudeBot", "PerplexityBot", "GoogleExtended", "CCBot", "anthropic-ai", "cohere-ai"]
+    directives = {}
+    lines = robots_txt.splitlines()
+    current_agents = []
+    for line in lines:
+        line = line.strip()
+        if line.lower().startswith("user-agent:"):
+            agent = line.split(":", 1)[1].strip()
+            current_agents = [agent]
+        elif line.lower().startswith("disallow:") and current_agents:
+            val = line.split(":", 1)[1].strip()
+            for a in current_agents:
+                for bot in AI_BOTS:
+                    if bot.lower() == a.lower() or a == "*":
+                        if val in ("/", ""):
+                            directives[bot] = directives.get(bot, "blocked" if val == "/" else "allowed")
+        elif line.lower().startswith("allow:") and current_agents:
+            val = line.split(":", 1)[1].strip()
+            if val == "/":
+                for a in current_agents:
+                    for bot in AI_BOTS:
+                        if bot.lower() == a.lower():
+                            directives[bot] = "allowed"
+    return directives
+
+
+def _extract_schema_signals(page, soup):
+    """Deep schema extraction for Section 2 checks."""
+    CONTENT_TYPES = {"HowTo", "Article", "BlogPosting", "NewsArticle", "WebPage"}
+    raw = []
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if isinstance(item, dict):
+                    raw.append(item)
+        except: pass
+    page.schema_raw = raw
+    for item in raw:
+        stype = item.get("@type", "")
+        if isinstance(stype, list): stype = " ".join(stype)
+        if "Organization" in stype or "LocalBusiness" in stype:
+            page.organization_schema = item
+            page.same_as_links = item.get("sameAs", []) if isinstance(item.get("sameAs"), list) else ([item["sameAs"]] if item.get("sameAs") else [])
+            addr = item.get("address", {})
+            if isinstance(addr, dict):
+                page.nap_address = addr.get("streetAddress", "") + " " + addr.get("addressLocality", "")
+            page.schema_nap = {"name": item.get("name", ""), "phone": item.get("telephone", ""), "address": page.nap_address}
+            page.nap_phone = item.get("telephone", "")
+        if "Person" in stype or "author" in str(item).lower():
+            page.has_author_schema = True
+        if "BreadcrumbList" in stype:
+            page.has_breadcrumb_schema = True
+        if "Service" in stype:
+            page.has_service_schema = True
+        if any(ct in stype for ct in CONTENT_TYPES):
+            page.has_howto_article_schema = True
+            dm = item.get("dateModified") or item.get("datePublished", "")
+            if dm: page.date_modified = dm
+
+
+def _extract_entity_links(page):
+    """Detect external entity links and social profile links."""
+    ENTITY_DOMAINS = {
+        "Wikipedia": "wikipedia.org", "LinkedIn": "linkedin.com",
+        "Crunchbase": "crunchbase.com", "G2": "g2.com", "Clutch": "clutch.co",
+    }
+    SOCIAL_DOMAINS = {
+        "linkedin": "linkedin.com", "twitter": "twitter.com", "x": "x.com",
+        "youtube": "youtube.com", "facebook": "facebook.com", "instagram": "instagram.com",
+    }
+    REVIEW_DOMAINS = {"G2": "g2.com", "Clutch": "clutch.co", "Trustpilot": "trustpilot.com", "GBR": "google.com/maps"}
+    PRESS_DOMAINS = ["forbes", "techcrunch", "businesswire", "prnewswire", "reuters",
+                     "bbc", "guardian", "nytimes", "entrepreneur", "inc.com"]
+    all_links = page.external_links + page.same_as_links
+    for link in all_links:
+        ll = link.lower()
+        for name, domain in ENTITY_DOMAINS.items():
+            if domain in ll and name not in page.external_entity_links:
+                page.external_entity_links[name] = link
+        for key, domain in SOCIAL_DOMAINS.items():
+            if domain in ll and key not in page.social_links:
+                page.social_links[key] = link
+        for name, domain in REVIEW_DOMAINS.items():
+            if domain in ll and name not in page.review_platform_links:
+                page.review_platform_links[name] = link
+        for press in PRESS_DOMAINS:
+            if press in ll:
+                page.press_mention_links.append(link)
+                break
+
+
+def _extract_content_quality(page, soup):
+    """Extract statistics density, quotable sentences, date signals."""
+    # Statistics / data points
+    page.statistics_count = len(re.findall(
+        r'\b\d+(?:\.\d+)?\s*(?:%|percent|million|billion|thousand|\$|£|€|x\s+(?:faster|more|better))',
+        page.full_text, re.I))
+    # Quotable sentences: standalone factual "X is/does Y" with 8-25 words
+    sents = re.split(r'(?<=[.!?])\s+', page.full_text)
+    page.quotable_sentence_count = sum(
+        1 for s in sents
+        if 8 <= len(s.split()) <= 30
+        and re.search(r'\b(is|are|was|were|provides|enables|helps|allows|means|refers to)\b', s, re.I)
+        and not s.strip().startswith(("I ", "We ", "Our ", "You "))
+    )
+    # Date modified — check <time> tags and meta
+    if not page.date_modified:
+        for tag in soup.find_all("time"):
+            dt = tag.get("datetime", "")
+            if dt and len(dt) >= 8:
+                page.date_modified = dt; break
+        if not page.date_modified:
+            for name in ["article:modified_time", "article:published_time", "og:updated_time"]:
+                m = soup.find("meta", property=name) or soup.find("meta", attrs={"name": name})
+                if m and m.get("content"):
+                    page.date_modified = m["content"]; break
+    # NAP from visible text
+    phone_match = re.search(r'\+?[\d][\d\s\-\(\)]{7,15}', page.full_text)
+    if phone_match and not page.nap_phone:
+        page.nap_phone = phone_match.group(0).strip()
+
+
+def _detect_render_type(page):
+    """Heuristic: is the page static, SSR-likely, or JS-heavy?"""
+    if page.word_count == 0:
+        page.page_render_type = "js-heavy"; return
+    ratio = page.script_count / max(page.word_count / 100, 1)
+    if ratio < 0.5 and page.word_count > 300:
+        page.page_render_type = "static"
+    elif ratio < 1.5:
+        page.page_render_type = "ssr-likely"
+    else:
+        page.page_render_type = "js-heavy"

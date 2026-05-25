@@ -9,6 +9,7 @@ from core import run_audit
 from utils.storage import save_audit, get_recent_audits, get_audit_by_id, get_stats, export_csv, _report_to_dict
 from utils.storage import create_user, get_user_by_email, update_user_password, get_all_users, update_user_role, delete_user
 from utils.auth import hash_password, verify_password, generate_temp_password, send_forgot_password_email
+from utils.pdf_export import generate_pdf
 
 st.set_page_config(page_title="GEO Readiness Audit", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
 
@@ -72,6 +73,13 @@ html,body,[class*="css"]{font-family:'DM Sans',sans-serif;}
 .fix-lbl{font-family:'Syne',sans-serif;font-size:9px;font-weight:700;letter-spacing:.15em;
  text-transform:uppercase;color:#2a8a5e;margin-bottom:5px;}
 .fix-txt{font-size:.81rem;color:#1a4a35;line-height:1.6;}
+/* Effort badges */
+.effort-q{background:#e8f4ff;color:#1a5fa8;font-size:9px;font-weight:700;letter-spacing:.08em;
+ padding:2px 7px;border-radius:2px;text-transform:uppercase;}
+.effort-m{background:#fff3e0;color:#8a5a00;font-size:9px;font-weight:700;letter-spacing:.08em;
+ padding:2px 7px;border-radius:2px;text-transform:uppercase;}
+.effort-c{background:#fce8f3;color:#8a0060;font-size:9px;font-weight:700;letter-spacing:.08em;
+ padding:2px 7px;border-radius:2px;text-transform:uppercase;}
 
 /* Stats row */
 .stat-box{background:#fff;border:1.5px solid rgba(13,13,13,.08);border-radius:6px;
@@ -150,24 +158,29 @@ def render_banner(data, domain):
       </div>
     </div>""", unsafe_allow_html=True)
 
+EFFORT_CLS = {"quick": "effort-q", "medium": "effort-m", "complex": "effort-c"}
+EFFORT_LBL = {"quick": "⚡ Quick Win", "medium": "🔧 Medium", "complex": "🏗️ Complex"}
+
 def render_check_cards(checks):
     for c in checks:
         st_c = STATUS_C.get(c["status"],"#888")
         st_bg = STATUS_BG.get(c["status"],"#f5f5f5")
         chip = CHIP_CLS.get(c["status"],"")
+        effort = c.get("effort", "medium")
+        effort_html = f'<span class="{EFFORT_CLS.get(effort,"effort-m")}">{EFFORT_LBL.get(effort,"🔧 Medium")}</span>'
         fix_html = (f'<div class="fix-box"><div class="fix-lbl">🔧 How to fix</div>'
                     f'<div class="fix-txt">{c.get("how_to_fix","")}</div></div>'
                     if c["status"] in ("fail","warn") else "")
         details_html = ""
         if c.get("details"):
             d_items = "".join([f'<li style="margin-bottom:6px;">{d}</li>' for d in c["details"]])
-            details_html = f'<div style="margin-top:10px; padding:10px; background:var(--cc-bg,#f9f9f9); border:1px solid rgba(13,13,13,0.05); border-radius:6px; font-size:0.82rem; max-height:220px; overflow-y:auto; color:#3a3530;"><strong style="font-family:\'Syne\',sans-serif;font-size:0.85rem;">Detailed Issues ({len(c["details"])}):</strong><ul style="margin-top:6px; padding-left:20px;">{d_items}</ul></div>'
-
+            details_html = f'<div style="margin-top:10px;padding:10px;background:var(--cc-bg,#f9f9f9);border:1px solid rgba(13,13,13,0.05);border-radius:6px;font-size:0.82rem;max-height:220px;overflow-y:auto;color:#3a3530;"><strong style="font-family:\'Syne\',sans-serif;font-size:0.85rem;">Detailed Issues ({len(c["details"])}):</strong><ul style="margin-top:6px;padding-left:20px;">{d_items}</ul></div>'
         st.markdown(f"""
         <div class="chk-card" style="--cc:{st_c};--cc-bg:{st_bg};">
           <div class="chk-header">
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="chip {chip}">{c['status'].upper()}</span>
+              {effort_html}
               <span class="chk-name">{c['name']}</span>
             </div>
             <span class="chk-badge">{c['score']}/{c['max_score']} pts</span>
@@ -177,6 +190,77 @@ def render_check_cards(checks):
           {fix_html}
           {details_html}
         </div>""", unsafe_allow_html=True)
+
+NEW_MODULES = [
+    ("crawlability_report", "crawlability",   "🕷️ Technical AI Crawlability",      True),
+    ("crawlability_report", "schema_depth",   "🗂️ Schema Markup Depth",            True),
+    ("entity_report",       "entity_kg",      "🕸️ Entity & Knowledge Graph",        True),
+    ("content_quality_report", "content_quality", "📖 Content Quality & LLM Readability", False),
+    ("content_quality_report", "off_page",    "🔗 Off-Page & Citation Authority",   False),
+]
+
+def render_new_module(report_key, mod_key, label, is_critical, data):
+    """Render a module from the new crawlability/entity/content_quality reports."""
+    report = data.get(report_key, {})
+    if not report:
+        return
+    mod = report.get(mod_key, {})
+    if not mod:
+        return
+    checks = mod.get("checks", [])
+    score  = mod.get("score", 0)
+    fails  = sum(1 for c in checks if c["status"] == "fail")
+    warns  = sum(1 for c in checks if c["status"] == "warn")
+    passes = sum(1 for c in checks if c["status"] == "pass")
+    crit_badge = '🚨 CRITICAL' if is_critical else ''
+    sorted_c = sorted(checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
+    header = f"{label}{crit_badge}: {score}/100  ·  ❌ {fails}  ·  ⚠️ {warns}  ·  ✅ {passes}"
+    with st.expander(header, expanded=(fails > 0)):
+        t_all, t_fail, t_warn, t_pass = st.tabs(["All", "Failed", "Warnings", "Passed"])
+        with t_all:  render_check_cards(sorted_c)
+        with t_fail: render_check_cards([c for c in sorted_c if c["status"]=="fail"])
+        with t_warn: render_check_cards([c for c in sorted_c if c["status"]=="warn"])
+        with t_pass: render_check_cards([c for c in sorted_c if c["status"]=="pass"])
+
+
+def render_fix_roadmap(data):
+    """Fix Roadmap: all fail/warn checks sorted by effort then impact."""
+    all_checks = []
+    # Gather from all modules
+    for rkey, mkey, _, _ in NEW_MODULES:
+        mod = (data.get(rkey) or {}).get(mkey, {})
+        all_checks.extend(mod.get("checks", []))
+    geo = data.get("geo_report", {})
+    if geo:
+        for gkey in ["citation_readiness","entity_clarity","extractability","trust_signals","overview_readiness","information_gain"]:
+            mod = geo.get(gkey, {})
+            if mod: all_checks.extend(mod.get("checks", []))
+    seo = data.get("seo_module", {})
+    if seo: all_checks.extend(seo.get("checks", []))
+
+    bad = [c for c in all_checks if c.get("status") in ("fail", "warn")]
+    effort_order = {"quick": 0, "medium": 1, "complex": 2}
+    bad_sorted = sorted(bad, key=lambda c: (
+        effort_order.get(c.get("effort", "medium"), 1),
+        0 if c.get("status") == "fail" else 1,
+        -(c.get("max_score", 0) - c.get("score", 0))
+    ))
+    quick = [c for c in bad_sorted if c.get("effort") == "quick"]
+    medium = [c for c in bad_sorted if c.get("effort") == "medium"]
+    complex_ = [c for c in bad_sorted if c.get("effort") == "complex"]
+    st.markdown(f"""<div style="background:#f0f7ff;border:1.5px solid #b0d0f0;border-radius:8px;padding:12px 16px;margin-bottom:12px;">
+      <strong>📋 Fix Roadmap</strong> — {len(quick)} Quick Wins · {len(medium)} Medium · {len(complex_)} Complex tasks
+      <br><small style="color:#6b6660;">Sorted by effort level. Start with Quick Wins for fastest GEO score gains.</small>
+    </div>""", unsafe_allow_html=True)
+    if quick:
+        st.markdown("**⚡ Quick Wins** *(< 1 day)*")
+        render_check_cards(quick)
+    if medium:
+        st.markdown("**🔧 Medium Effort** *(1–3 days)*")
+        render_check_cards(medium)
+    if complex_:
+        st.markdown("**🏗️ Complex** *(3+ days)*")
+        render_check_cards(complex_)
 
 GEO_MODULES = [
     ("citation_readiness",  "🤖 AI Citation Readiness"),
@@ -208,7 +292,6 @@ def render_geo_modules(geo):
         passes = sum(1 for c in checks if c["status"] == "pass")
         sorted_c = sorted(checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
         header = f"{label}: {score}/100  ·  ❌ {fails}  ·  ⚠️ {warns}  ·  ✅ {passes}"
-        # Expand modules with fails automatically
         with st.expander(header, expanded=(fails > 0)):
             t_all, t_fail, t_warn, t_pass = st.tabs(["All", "Failed", "Warnings", "Passed"])
             with t_all:  render_check_cards(sorted_c)
@@ -248,27 +331,31 @@ def render_full_report(data):
 
     render_banner(data, domain)
 
-    # ── Key Insights + Audit Summary ─────────────────────────────────────────
-    left, right = st.columns([3, 2])
-    with left:
-        st.markdown('<div class="sec-label">Key AI/GEO Insights</div>', unsafe_allow_html=True)
+    # ── Fix Roadmap + Key Insights ────────────────────────────────────────────
+    roadmap_tab, insights_tab, summary_tab = st.tabs(["📋 Fix Roadmap", "💡 Key Insights", "📊 Audit Summary"])
+    with roadmap_tab:
+        render_fix_roadmap(data)
+    with insights_tab:
         for ins in data.get("insights",[]):
+            effort = ins.get("effort", "medium")
             st.markdown(f"""
             <div class="ins-card">
               <span style="font-size:14px;margin-top:2px;">{ins['icon']}</span>
               <div>
-                <div class="ins-title">{ins['title']}</div>
+                <div class="ins-title">{ins['title']} <span class="{EFFORT_CLS.get(effort,'effort-m')}">{EFFORT_LBL.get(effort,'')}</span></div>
                 <div class="ins-found">{ins['found']}</div>
                 <div class="ins-impact">{ins['impact']}</div>
               </div>
             </div>""", unsafe_allow_html=True)
-
-    with right:
-        st.markdown('<div class="sec-label">Audit Summary</div>', unsafe_allow_html=True)
+    with summary_tab:
         geo_checks_all = _all_geo_checks(geo) if geo else []
         seo_checks_all = seo_mod.get("checks",[]) if seo_mod else []
-        all_checks = geo_checks_all + seo_checks_all
-        total  = len(all_checks)
+        new_checks_all = []
+        for rkey, mkey, _, _ in NEW_MODULES:
+            mod = (data.get(rkey) or {}).get(mkey, {})
+            new_checks_all.extend(mod.get("checks", []) if mod else [])
+        all_checks = new_checks_all + geo_checks_all + seo_checks_all
+        total = len(all_checks)
         fails  = sum(1 for c in all_checks if c["status"]=="fail")
         warns  = sum(1 for c in all_checks if c["status"]=="warn")
         passes = sum(1 for c in all_checks if c["status"]=="pass")
@@ -278,13 +365,14 @@ def render_full_report(data):
             ("⚠️ Warnings", warns, "#c8962f"),
             ("✅ Passed", passes, "#2a8a5e"),
         ]:
-            st.markdown(f"""
-            <div class="stat-box">
-              <span style="font-size:.83rem;color:#4a4540;">{label}</span>
-              <span class="stat-val" style="color:{col};">{val}</span>
-            </div>""", unsafe_allow_html=True)
+            st.markdown(f'<div class="stat-box"><span style="font-size:.83rem;color:#4a4540;">{label}</span><span class="stat-val" style="color:{col};">{val}</span></div>', unsafe_allow_html=True)
         ft = data.get("fetch_time_ms", 0)
         st.markdown(f'<div style="text-align:center;font-size:11px;color:#9a9285;margin-top:8px;">Fetched in {ft}ms</div>', unsafe_allow_html=True)
+
+    # ── Critical New Modules ───────────────────────────────────────────────────
+    st.markdown('<div class="sec-label">Technical AI Crawlability &amp; Schema — Critical</div>', unsafe_allow_html=True)
+    for rkey, mkey, label, is_crit in NEW_MODULES:
+        render_new_module(rkey, mkey, label, is_crit, data)
 
     # ── GEO Readiness — 6 modules ─────────────────────────────────────────────
     st.markdown('<div class="sec-label">GEO Readiness — Detailed Report</div>', unsafe_allow_html=True)
@@ -312,7 +400,7 @@ def render_full_report(data):
             with tab_warn: render_check_cards([c for c in sorted_seo if c["status"]=="warn"])
             with tab_pass: render_check_cards([c for c in sorted_seo if c["status"]=="pass"])
 
-    # ── CTA ───────────────────────────────────────────────────────────────────
+    # ── CTA + Downloads ───────────────────────────────────────────────────────
     st.markdown("""
     <div class="cta-block">
       <div class="cta-eye">Want expert help?</div>
@@ -320,14 +408,22 @@ def render_full_report(data):
       <div class="cta-s">This free audit highlights the gaps. Our full service includes AI content restructuring, entity clarity optimisation, trust signal building, and a GEO implementation plan tailored to your site.</div>
     </div>""", unsafe_allow_html=True)
     st.markdown("")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1: st.button("📋  Get Full GEO Report", type="primary", use_container_width=True, key=f"cta1_{url[:15]}")
     with c2: st.button("📩  Request Detailed Audit", type="secondary", use_container_width=True, key=f"cta2_{url[:15]}")
     with c3:
-        st.download_button("⬇️  Download Report JSON",
+        st.download_button("⬇️  Download JSON",
             data=json.dumps(data, indent=2, ensure_ascii=False),
             file_name=f"geo_audit_{domain}.json", mime="application/json",
             use_container_width=True, key=f"dl_{url[:15]}")
+    with c4:
+        pdf_bytes = generate_pdf(data)
+        if pdf_bytes:
+            st.download_button("📄  Download PDF",
+                data=pdf_bytes, file_name=f"geo_audit_{domain}.pdf",
+                mime="application/pdf", use_container_width=True, key=f"pdf_{url[:15]}")
+        else:
+            st.caption("Install fpdf2 for PDF export")
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for k,v in [("report",None),("show_results",False),("view_saved",None), ("user", None), ("view_admin", False)]:
@@ -505,9 +601,10 @@ if not st.session_state.show_results and not st.session_state.get('view_admin'):
     with col_e: email_input = st.text_input("Your Email *(required)*", value=st.session_state.user['email'], placeholder="you@company.com")
     kw_input = st.text_input("Target Keyword *(recommended — e.g. 'best python seo tools')*",
                               placeholder="Enter your primary target keyword for deeper analysis")
+    check_broken = st.checkbox("🔗 Check for broken links *(adds ~10s to audit time)*", value=False)
 
     c1, c2 = st.columns([3,1])
-    with c1: run_btn = st.button("🔍  Run AI SEO Audit", type="primary", use_container_width=True)
+    with c1: run_btn = st.button("🔍  Run GEO Audit", type="primary", use_container_width=True)
     with c2: st.markdown('<p style="font-size:11px;color:#9a9285;padding-top:10px;">No spam ever.</p>', unsafe_allow_html=True)
 
     if run_btn:
@@ -522,7 +619,7 @@ if not st.session_state.show_results and not st.session_state.get('view_admin'):
                      (80,"Scoring GEO readiness modules…"),(92,"Calculating scores…")]
             for pct, msg in steps:
                 txt.markdown(f"**{msg}**"); prog.progress(pct); time.sleep(0.3)
-            report = run_audit(norm_url, email_input, kw_input.strip())
+            report = run_audit(norm_url, email_input, kw_input.strip(), check_broken_links=check_broken)
             save_audit(report)
             prog.progress(100); txt.markdown("**Done! Loading your report…**")
             time.sleep(0.3); prog.empty(); txt.empty()

@@ -89,12 +89,62 @@ def _serialize_geo_report(geo_report) -> dict:
     }
 
 
+def _serialize_module_score(m) -> dict:
+    """Serialize any ModuleScore-like dataclass with checks list."""
+    if m is None: return None
+    checks = []
+    for c in (m.checks if hasattr(m, 'checks') else m.get('checks', [])):
+        entry = {
+            "name": c.name, "score": c.score, "max_score": c.max_score,
+            "status": c.status, "found": c.found, "impact": c.impact,
+            "how_to_fix": c.how_to_fix,
+            "category": getattr(c, "category", "GEO"),
+            "effort": getattr(c, "effort", "medium"),
+        }
+        checks.append(entry)
+    return {
+        "module": m.module if hasattr(m, 'module') else m.get('module'),
+        "score":  m.score  if hasattr(m, 'score')  else m.get('score', 0),
+        "icon":   m.icon   if hasattr(m, 'icon')   else m.get('icon', ''),
+        "checks": checks,
+    }
+
+
+def _serialize_crawlability_report(r) -> dict:
+    if r is None: return None
+    return {
+        "crawlability":       _serialize_module_score(r.crawlability),
+        "schema_depth":       _serialize_module_score(r.schema_depth),
+        "crawlability_score": r.crawlability_score,
+        "schema_score":       r.schema_score,
+    }
+
+
+def _serialize_entity_report(r) -> dict:
+    if r is None: return None
+    return {
+        "entity_kg":    _serialize_module_score(r.entity_kg),
+        "entity_score": r.entity_score,
+    }
+
+
+def _serialize_content_quality_report(r) -> dict:
+    if r is None: return None
+    return {
+        "content_quality":       _serialize_module_score(r.content_quality),
+        "off_page":              _serialize_module_score(r.off_page),
+        "content_quality_score": r.content_quality_score,
+        "off_page_score":        r.off_page_score,
+    }
+
+
 def _report_to_dict(report) -> dict:
     def _mod(m):
         if m is None: return None
         checks = [{"name":c.name,"score":c.score,"max_score":c.max_score,
                    "status":c.status,"found":c.found,"impact":c.impact,
                    "how_to_fix":c.how_to_fix,"category":getattr(c,"category","SEO"),
+                   "effort":getattr(c,"effort","medium"),
                    "details":getattr(c,"details",None)}
                   for c in m.checks]
         return {"module": m.module, "score": m.score, "checks": checks}
@@ -105,9 +155,12 @@ def _report_to_dict(report) -> dict:
         "overall_score": report.overall_score, "seo_score": report.seo_score,
         "ai_score": report.ai_score, "overall_grade": report.overall_grade,
         "overall_color": report.overall_color,
-        "seo_module": _mod(report.seo_module),
-        "ai_module":  _mod(report.ai_module),
-        "geo_report": _serialize_geo_report(report.geo_report),
+        "seo_module":              _mod(report.seo_module),
+        "ai_module":               _mod(report.ai_module),
+        "geo_report":              _serialize_geo_report(report.geo_report),
+        "crawlability_report":     _serialize_crawlability_report(report.crawlability_report),
+        "entity_report":           _serialize_entity_report(report.entity_report),
+        "content_quality_report":  _serialize_content_quality_report(report.content_quality_report),
         "insights": report.insights,
     }
 

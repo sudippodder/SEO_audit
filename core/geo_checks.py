@@ -16,6 +16,7 @@ class CheckResult:
     impact: str
     how_to_fix: str
     category: str = "GEO"
+    effort: str = "medium"   # quick | medium | complex
 
 
 # ═══════════════════════════════════════════════════════════════════════════
