@@ -126,6 +126,8 @@ def validate(url, email):
 def render_banner(data, domain):
     s = data["overall_score"]; sc = data.get("seo_score",0); ai = data.get("ai_score",0)
     geo = data.get("geo_report",{}); geo_score = geo.get("geo_score",0) if geo else 0
+    ext_auth_score = (data.get("external_authority_report") or {}).get("external_authority_score", 0)
+    ai_vis_score = (data.get("ai_visibility_report") or {}).get("ai_visibility_score", 0)
     grade = data["overall_grade"]; color = gc(s)
     saved = f" · Saved {data['saved_at']}" if data.get("saved_at") else ""
     kw_tag = f" · Keyword: <em>{data.get('keyword','')}</em>" if data.get("keyword") else ""
@@ -144,6 +146,14 @@ def render_banner(data, domain):
         <div class="score-pill-box">
           <div class="pill-num sg-{'r' if ai<=40 else 'a' if ai<=70 else 'g'}">{ai}</div>
           <div class="pill-label">AI Score</div>
+        </div>
+        <div class="score-pill-box">
+          <div class="pill-num sg-{'r' if ext_auth_score<=40 else 'a' if ext_auth_score<=70 else 'g'}">{ext_auth_score}</div>
+          <div class="pill-label">Ext Authority</div>
+        </div>
+        <div class="score-pill-box">
+          <div class="pill-num sg-{'r' if ai_vis_score<=40 else 'a' if ai_vis_score<=70 else 'g'}">{ai_vis_score}</div>
+          <div class="pill-label">AI Visibility</div>
         </div>
         <div class="score-pill-box">
           <div class="pill-num sg-{'r' if sc<=40 else 'a' if sc<=70 else 'g'}">{sc}</div>
@@ -197,6 +207,8 @@ NEW_MODULES = [
     ("entity_report",       "entity_kg",      "🕸️ Entity & Knowledge Graph",        True),
     ("content_quality_report", "content_quality", "📖 Content Quality & LLM Readability", False),
     ("content_quality_report", "off_page",    "🔗 Off-Page & Citation Authority",   False),
+    ("external_authority_report", "external_authority", "🌐 External Authority",     True),
+    ("ai_visibility_report", "ai_visibility",  "🤖 AI Visibility",                  True),
 ]
 
 def render_new_module(report_key, mod_key, label, is_critical, data):
@@ -226,7 +238,7 @@ def render_new_module(report_key, mod_key, label, is_critical, data):
 def render_fix_roadmap(data):
     """Fix Roadmap: all fail/warn checks sorted by effort then impact."""
     all_checks = []
-    # Gather from all modules
+    # Gather from all modules (including new external authority + AI visibility)
     for rkey, mkey, _, _ in NEW_MODULES:
         mod = (data.get(rkey) or {}).get(mkey, {})
         all_checks.extend(mod.get("checks", []))
@@ -321,15 +333,183 @@ def render_geo_opportunity(opp):
     sorted_opp = sorted(checks, key=lambda c:(0 if c["status"]=="fail" else 1 if c["status"]=="warn" else 2))
     render_check_cards(sorted_opp)
 
+def _render_site_crawl_summary(data):
+    """Render site crawl summary if full-site audit was performed."""
+    crawl = data.get("site_crawl_result")
+    if not crawl:
+        return
+    pages = crawl.get("pages", [])
+    st.markdown('<div class="sec-label">🌐 Site Crawl Summary</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Pages Crawled", crawl.get("pages_crawled", 0))
+    c2.metric("Pages Discovered", crawl.get("pages_discovered", 0))
+    c3.metric("Crawl Time", f"{crawl.get('crawl_time_ms', 0)}ms")
+
+    # Page type coverage
+    type_icons = {"homepage": "🏠", "about": "ℹ️", "contact": "📞", "services": "⚙️",
+                  "blog": "📝", "case_study": "📊", "team": "👥", "reviews": "⭐", "pricing": "💰"}
+    expected = ["homepage", "about", "contact", "services", "blog", "case_study", "team", "reviews"]
+    found_types = {p["page_type"] for p in pages}
+    coverage_html = ""
+    for pt in expected:
+        icon = type_icons.get(pt, "📄")
+        if pt in found_types:
+            coverage_html += f'<span style="display:inline-block;background:#e4f5ec;color:#1a7a45;padding:3px 10px;border-radius:4px;margin:2px 4px;font-size:0.82rem;">{icon} {pt.replace("_"," ").title()} ✅</span>'
+        else:
+            coverage_html += f'<span style="display:inline-block;background:#fde8e5;color:#c84b2f;padding:3px 10px;border-radius:4px;margin:2px 4px;font-size:0.82rem;">{icon} {pt.replace("_"," ").title()} ❌</span>'
+    st.markdown(f'<div style="margin:8px 0 16px;">{coverage_html}</div>', unsafe_allow_html=True)
+
+
+def _render_external_profiles(data):
+    """Render external profile validation results."""
+    ext = data.get("external_validation")
+    if not ext:
+        return
+    profiles = ext.get("profiles", [])
+    found = ext.get("profiles_found", 0)
+    total = len(profiles)
+    st.markdown(f'<div class="sec-label">🔍 External Profile Validation — {found}/{total} Detected</div>', unsafe_allow_html=True)
+
+    platform_icons = {"Trustpilot": "⭐", "Clutch": "🏆", "G2": "📊", "Crunchbase": "🚀",
+                      "LinkedIn": "💼", "YouTube": "📺", "Google Business": "📍",
+                      "Wikipedia": "📚", "Wikidata": "🔗"}
+    for p in profiles:
+        icon = platform_icons.get(p["platform"], "🔹")
+        if p.get("exists"):
+            rating = f" · {p['rating']}/5" if p.get('rating') else ""
+            reviews = f" · {p['review_count']} reviews" if p.get('review_count') else ""
+            url_link = f" · <a href='{p['url']}' target='_blank' style='color:#2a8a5e;font-size:0.8rem;'>View →</a>" if p.get('url') else ""
+            st.markdown(f'<div style="background:#e4f5ec;border:1px solid #c0e0d0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
+                        f'{icon} <strong>{p["platform"]}</strong> ✅ Verified{rating}{reviews}{url_link}</div>', unsafe_allow_html=True)
+        elif p.get("verification_status") == "error":
+            st.markdown(f'<div style="background:#fdf3e0;border:1px solid #e0d0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
+                        f'{icon} <strong>{p["platform"]}</strong> 🔍 Could not verify — {p.get("error_message", "connection issue")}</div>', unsafe_allow_html=True)
+        elif p.get("verification_status") == "heuristic":
+            st.markdown(f'<div style="background:#fdf3e0;border:1px solid #e0d0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
+                        f'{icon} <strong>{p["platform"]}</strong> ⚠️ Requires manual verification</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div style="background:#fde8e5;border:1px solid #e0b0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
+                        f'{icon} <strong>{p["platform"]}</strong> ❌ Not detected</div>', unsafe_allow_html=True)
+    cached = ext.get("cached", False)
+    vtime = ext.get("validation_time_ms", 0)
+    st.markdown(f'<div style="text-align:right;font-size:0.75rem;color:#9a9285;margin-top:4px;">'
+                f'Validated in {vtime}ms{" (cached)" if cached else ""}</div>', unsafe_allow_html=True)
+
+def _render_ai_test_results(data):
+    """Render live AI (ChatGPT) test results if available."""
+    ai_vis = data.get("ai_visibility_report", {})
+    if not ai_vis:
+        return
+    ai_test = ai_vis.get("ai_test_result")
+    if not ai_test or not ai_test.get("tested"):
+        return
+
+    st.markdown('<div class="sec-label">🤖 Live AI Visibility Test — ChatGPT Results</div>', unsafe_allow_html=True)
+
+    vis_score = ai_test.get("visibility_score", 0)
+    model = ai_test.get("model_used", "gpt-4o-mini")
+    latency = ai_test.get("total_latency_ms", 0)
+    brand_recognized = ai_test.get("brand_recognized", False)
+    brand_recommended = ai_test.get("brand_recommended", False)
+    sentiment = ai_test.get("overall_sentiment", "unknown")
+    total_mentions = ai_test.get("total_mentions", 0)
+    competitors = ai_test.get("competitors_found", [])
+
+    # Error check
+    if ai_test.get("api_error"):
+        st.warning(f"⚠️ AI test error: {ai_test['api_error']}")
+        return
+
+    # Visibility score gauge
+    score_color = "#2a8a5e" if vis_score > 70 else ("#c8962f" if vis_score > 40 else "#c84b2f")
+    st.markdown(f"""<div style="background:linear-gradient(135deg,#1a1a2e,#16213e);border-radius:10px;padding:16px 20px;margin-bottom:12px;color:#fff;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="font-size:0.75rem;color:#aaa;text-transform:uppercase;letter-spacing:0.1em;">AI Visibility Score (ChatGPT)</div>
+          <div style="font-size:2.5rem;font-weight:800;color:{score_color};">{vis_score}<span style="font-size:1rem;color:#888;">/100</span></div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:0.8rem;">Brand Recognised: <strong>{'✅ Yes' if brand_recognized else '❌ No'}</strong></div>
+          <div style="font-size:0.8rem;">Brand Recommended: <strong>{'✅ Yes' if brand_recommended else '❌ No'}</strong></div>
+          <div style="font-size:0.8rem;">Sentiment: <strong>{'🟢 ' + sentiment.title() if sentiment == 'positive' else '🟡 ' + sentiment.title() if sentiment == 'neutral' else '🔴 ' + sentiment.title() if sentiment == 'negative' else '⚪ ' + sentiment.title()}</strong></div>
+          <div style="font-size:0.8rem;">Mentions: <strong>{total_mentions}</strong></div>
+        </div>
+      </div>
+      <div style="font-size:0.7rem;color:#666;margin-top:8px;">Model: {model} · Tested in {latency}ms</div>
+    </div>""", unsafe_allow_html=True)
+
+    # Competitor landscape
+    if competitors:
+        comp_str = " · ".join(competitors[:8])
+        st.markdown(f'<div style="background:#f8f6f2;border:1px solid #e0dcd5;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.82rem;">'
+                    f'<strong>🏆 AI-Identified Competitors:</strong> {comp_str}</div>', unsafe_allow_html=True)
+
+    # Individual query results
+    queries = ai_test.get("queries", [])
+    query_labels = {
+        "brand_knowledge": "🔍 Brand Knowledge Test",
+        "keyword_recommendation": "🎯 Keyword Ranking Test",
+        "competitor_comparison": "⚔️ Competitor Comparison Test",
+    }
+    for q in queries:
+        qtype = q.get("query_type", "")
+        label = query_labels.get(qtype, qtype)
+        mentioned = q.get("brand_mentioned", False)
+        position = q.get("position", "not_mentioned")
+        q_sentiment = q.get("sentiment", "unknown")
+        q_error = q.get("error", "")
+
+        if q_error:
+            status_badge = '— ERROR'
+        elif mentioned:
+            status_badge = '— ✅ DETECTED'
+        else:
+            status_badge = '— ❌ NOT FOUND'
+
+        pos_str = ""
+        if position and position != "not_mentioned":
+            pos_str = f" · Position: <strong>{position}</strong>"
+        sent_str = ""
+        if q_sentiment and q_sentiment != "not_mentioned":
+            sent_str = f" · Sentiment: <strong>{q_sentiment}</strong>"
+
+        with st.expander(f"{label} {status_badge}", expanded=False):
+            if q_error:
+                st.error(f"Error: {q_error}")
+            else:
+                st.markdown(f'<div style="font-size:0.82rem;color:#4a4540;margin-bottom:6px;">'
+                            f'Mentioned: <strong>{"Yes" if mentioned else "No"}</strong>'
+                            f'{pos_str}{sent_str} · Mentions: <strong>{q.get("mention_count", 0)}</strong>'
+                            f'</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="font-size:0.78rem;color:#6b6660;margin-bottom:4px;"><em>Prompt:</em> {q.get("prompt", "")}</div>', unsafe_allow_html=True)
+                response = q.get("response", "")
+                if response:
+                    st.markdown("**ChatGPT Response:**")
+                    st.markdown(f'<div style="background:#f8f6f2;border:1px solid #e0dcd5;border-radius:6px;padding:10px 14px;font-size:0.82rem;max-height:300px;overflow-y:auto;">{response}</div>', unsafe_allow_html=True)
+                if q.get("competitor_mentions"):
+                    st.markdown(f'<div style="font-size:0.78rem;color:#6b6660;margin-top:6px;">Competitors in response: {", ".join(q["competitor_mentions"][:6])}</div>', unsafe_allow_html=True)
+
+
 def render_full_report(data):
     url = data.get("url",""); domain = urlparse(url).netloc.replace("www.","")
     seo_mod = data.get("seo_module",{})
     geo = data.get("geo_report",{})
     error = data.get("error")
+    audit_mode = data.get("audit_mode", "single")
     if error:
         st.error(f"**Audit error:** {error}"); return
 
+    # Audit mode badge
+    if audit_mode == "full_site":
+        st.markdown('<span style="background:#1a7a45;color:#fff;font-size:10px;font-weight:700;letter-spacing:.12em;padding:3px 10px;border-radius:3px;text-transform:uppercase;">Full Site Audit</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span style="background:#6b6660;color:#fff;font-size:10px;font-weight:700;letter-spacing:.12em;padding:3px 10px;border-radius:3px;text-transform:uppercase;">Single Page Audit</span>', unsafe_allow_html=True)
+
     render_banner(data, domain)
+
+    # ── Site Crawl Summary (full-site only) ────────────────────────────────────
+    if audit_mode == "full_site":
+        _render_site_crawl_summary(data)
 
     # ── Fix Roadmap + Key Insights ────────────────────────────────────────────
     roadmap_tab, insights_tab, summary_tab = st.tabs(["📋 Fix Roadmap", "💡 Key Insights", "📊 Audit Summary"])
@@ -366,12 +546,35 @@ def render_full_report(data):
             ("✅ Passed", passes, "#2a8a5e"),
         ]:
             st.markdown(f'<div class="stat-box"><span style="font-size:.83rem;color:#4a4540;">{label}</span><span class="stat-val" style="color:{col};">{val}</span></div>', unsafe_allow_html=True)
+        # Show audit mode info
         ft = data.get("fetch_time_ms", 0)
-        st.markdown(f'<div style="text-align:center;font-size:11px;color:#9a9285;margin-top:8px;">Fetched in {ft}ms</div>', unsafe_allow_html=True)
+        mode_label = "Full-site" if audit_mode == "full_site" else "Single-page"
+        st.markdown(f'<div style="text-align:center;font-size:11px;color:#9a9285;margin-top:8px;">{mode_label} audit · Fetched in {ft}ms</div>', unsafe_allow_html=True)
 
-    # ── Critical New Modules ───────────────────────────────────────────────────
+    # ── Critical New Modules (Technical + Schema + Entity + Content + External Authority + AI Visibility) ──
     st.markdown('<div class="sec-label">Technical AI Crawlability &amp; Schema — Critical</div>', unsafe_allow_html=True)
-    for rkey, mkey, label, is_crit in NEW_MODULES:
+    for rkey, mkey, label, is_crit in NEW_MODULES[:3]:  # crawlability, schema, entity
+        render_new_module(rkey, mkey, label, is_crit, data)
+
+    # ── External Authority & AI Visibility ─────────────────────────────────────
+    ext_auth = data.get("external_authority_report")
+    ai_vis = data.get("ai_visibility_report")
+    if ext_auth or ai_vis:
+        st.markdown('<div class="sec-label">External Authority &amp; AI Visibility</div>', unsafe_allow_html=True)
+        if ext_auth:
+            render_new_module("external_authority_report", "external_authority", "🌐 External Authority", True, data)
+        if ai_vis:
+            render_new_module("ai_visibility_report", "ai_visibility", "🤖 AI Visibility", True, data)
+
+    # ── External Profile Validation Details ────────────────────────────────────
+    _render_external_profiles(data)
+
+    # ── Live AI Test Results (ChatGPT) ────────────────────────────────────────
+    _render_ai_test_results(data)
+
+    # ── Content Quality & Off-Page ────────────────────────────────────────────
+    st.markdown('<div class="sec-label">Content Quality &amp; Off-Page Authority</div>', unsafe_allow_html=True)
+    for rkey, mkey, label, is_crit in NEW_MODULES[3:5]:  # content quality, off-page
         render_new_module(rkey, mkey, label, is_crit, data)
 
     # ── GEO Readiness — 6 modules ─────────────────────────────────────────────
@@ -498,8 +701,22 @@ with st.sidebar:
                 st.success("Password updated!")
             else:
                 st.error("Password too short.")
+        st.divider()
+        st.markdown("**🤖 AI Visibility Testing**")
+        st.markdown('<span style="font-size:0.78rem;color:#6b6660;">Enter your OpenAI API key to enable live AI visibility testing. Tests if ChatGPT recognises your brand and recommends it for your keywords.</span>', unsafe_allow_html=True)
+        openai_key = st.text_input("OpenAI API Key", type="password", key="openai_key",
+                                    placeholder="sk-...")
+        if openai_key:
+            st.session_state.openai_api_key = openai_key
+            st.success("✅ API key saved for this session")
+        elif st.session_state.get('openai_api_key'):
+            st.info("API key loaded from session")
+        elif os.environ.get('OPENAI_API_KEY'):
+            st.info("API key loaded from environment (.env)")
+        st.divider()
         if st.button("Logout", use_container_width=True):
             st.session_state.user = None
+            st.session_state.openai_api_key = None
             st.rerun()
             
     st.divider()
@@ -601,7 +818,30 @@ if not st.session_state.show_results and not st.session_state.get('view_admin'):
     with col_e: email_input = st.text_input("Your Email *(required)*", value=st.session_state.user['email'], placeholder="you@company.com")
     kw_input = st.text_input("Target Keyword *(recommended — e.g. 'best python seo tools')*",
                               placeholder="Enter your primary target keyword for deeper analysis")
-    check_broken = st.checkbox("🔗 Check for broken links *(adds ~10s to audit time)*", value=False)
+    opt_c1, opt_c2 = st.columns(2)
+    with opt_c1:
+        full_site = st.checkbox("🌐 Full Site Audit *(crawls key pages + validates external profiles)*", value=True)
+    with opt_c2:
+        check_broken = st.checkbox("🔗 Check for broken links *(adds ~10s)*", value=False)
+
+    # AI testing option
+    has_api_key = bool(st.session_state.get('openai_api_key') or os.environ.get('OPENAI_API_KEY'))
+    ai_test_enabled = st.checkbox(
+        "🤖 Live AI Visibility Test *(queries ChatGPT to check brand recognition)*",
+        value=has_api_key,
+        disabled=not has_api_key,
+        help="Requires OpenAI API key. Add it in Settings (sidebar)." if not has_api_key else "Will query ChatGPT 3 times (~$0.01 cost)"
+    )
+    if not has_api_key and ai_test_enabled:
+        ai_test_enabled = False
+    if not has_api_key:
+        st.markdown('<span style="font-size:0.78rem;color:#c8962f;">💡 Add your OpenAI API key in ⚙️ Settings (sidebar) to enable live AI visibility testing</span>', unsafe_allow_html=True)
+
+    if full_site:
+        st.markdown('<div style="background:#f0f7ff;border:1px solid #b0d0f0;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.82rem;color:#3a5a80;">'
+                    '🌐 <strong>Full Site Audit</strong> will crawl ~10 key pages (About, Contact, Services, Blog, Case Studies…), '
+                    'validate external profiles (Trustpilot, G2, LinkedIn, Wikipedia…), and generate a combined score across the entire site. '
+                    'Takes ~20-40 seconds.</div>', unsafe_allow_html=True)
 
     c1, c2 = st.columns([3,1])
     with c1: run_btn = st.button("🔍  Run GEO Audit", type="primary", use_container_width=True)
@@ -614,12 +854,35 @@ if not st.session_state.show_results and not st.session_state.get('view_admin'):
         else:
             norm_url = url_input if url_input.startswith("http") else "https://"+url_input
             prog = st.progress(0); txt = st.empty()
-            steps = [(12,"Fetching page content…"),(28,"Parsing HTML structure…"),
-                     (48,"Analysing SEO signals…"),(65,"Evaluating AI citation readiness…"),
-                     (80,"Scoring GEO readiness modules…"),(92,"Calculating scores…")]
+            if full_site:
+                steps = [
+                    (6,  "Discovering site pages…"),
+                    (18, "Crawling key pages (About, Contact, Services…)"),
+                    (35, "Analysing on-page signals…"),
+                    (48, "Validating external profiles (Trustpilot, G2, LinkedIn…)"),
+                    (60, "Evaluating AI citation readiness…"),
+                    (72, "Scoring GEO readiness modules…"),
+                ]
+                if ai_test_enabled:
+                    steps.append((80, "🤖 Testing AI visibility with ChatGPT…"))
+                steps.extend([
+                    (90, "Checking AI visibility signals…"),
+                    (96, "Calculating combined scores…"),
+                ])
+            else:
+                steps = [(10,"Fetching page content…"),(24,"Parsing HTML structure…"),
+                         (38,"Validating external profiles…"),(50,"Analysing SEO signals…"),
+                         (62,"Evaluating AI citation readiness…"),
+                         (74,"Scoring GEO readiness modules…")]
+                if ai_test_enabled:
+                    steps.append((82, "🤖 Testing AI visibility with ChatGPT…"))
+                steps.append((94,"Calculating scores…"))
             for pct, msg in steps:
                 txt.markdown(f"**{msg}**"); prog.progress(pct); time.sleep(0.3)
-            report = run_audit(norm_url, email_input, kw_input.strip(), check_broken_links=check_broken)
+            api_key = (st.session_state.get('openai_api_key') or os.environ.get('OPENAI_API_KEY', '')) if ai_test_enabled else ''
+            report = run_audit(norm_url, email_input, kw_input.strip(),
+                               check_broken_links=check_broken, full_site=full_site,
+                               openai_api_key=api_key)
             save_audit(report)
             prog.progress(100); txt.markdown("**Done! Loading your report…**")
             time.sleep(0.3); prog.empty(); txt.empty()

@@ -76,21 +76,31 @@ def generate_pdf(data: dict) -> Optional[bytes]:
         ("Overall Score", data.get("overall_score", 0)),
         ("GEO Score",     (data.get("geo_report") or {}).get("geo_score", 0)),
         ("AI Score",      data.get("ai_score", 0)),
+        ("Ext Authority", (data.get("external_authority_report") or {}).get("external_authority_score", 0)),
+        ("AI Visibility", (data.get("ai_visibility_report") or {}).get("ai_visibility_score", 0)),
         ("SEO Score",     data.get("seo_score", 0)),
     ]
-    col_w = 47
+    col_w = 31
     for _, val in scores:
         color = (42, 138, 94) if val > 70 else ((200, 150, 47) if val > 40 else (200, 75, 47))
         pdf.set_fill_color(*color)
         pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 20)
-        pdf.cell(col_w, 12, str(val), fill=True, align="C")
-    pdf.ln(12)
-    pdf.set_font("Helvetica", "", 8)
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(col_w, 10, str(val), fill=True, align="C")
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "", 7)
     pdf.set_text_color(80, 80, 80)
     for label, _ in scores:
         pdf.cell(col_w, 5, label, align="C")
-    pdf.ln(10)
+    pdf.ln(8)
+
+    # Audit mode
+    audit_mode = data.get("audit_mode", "single")
+    mode_label = "Full-Site Audit" if audit_mode == "full_site" else "Single-Page Audit"
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(0, 5, f"Mode: {mode_label}", ln=True)
+    pdf.ln(2)
 
     # Key Insights
     insights = data.get("insights", [])
@@ -129,6 +139,57 @@ def generate_pdf(data: dict) -> Optional[bytes]:
             if not mod:
                 continue
             _render_module(pdf, _safe(mod.get("module", mkey)), mod.get("score", 0), mod, _safe)
+
+    # External Authority & AI Visibility
+    for rkey, label in [
+        ("external_authority_report", "External Authority"),
+        ("ai_visibility_report",     "AI Visibility"),
+    ]:
+        rpt = data.get(rkey, {})
+        if not rpt:
+            continue
+        _section_header(pdf, label, _safe)
+        for mkey in ["external_authority", "ai_visibility"]:
+            mod = rpt.get(mkey)
+            if not mod:
+                continue
+            _render_module(pdf, _safe(mod.get("module", mkey)), mod.get("score", 0), mod, _safe)
+
+    # External Profile Validation
+    ext_val = data.get("external_validation", {})
+    if ext_val:
+        profiles = ext_val.get("profiles", [])
+        found = ext_val.get("profiles_found", 0)
+        _section_header(pdf, f"External Profile Validation - {found}/{len(profiles)} Detected", _safe)
+        for p in profiles:
+            status = "pass" if p.get("exists") else ("warn" if p.get("verification_status") == "error" else "fail")
+            r, g, b = {"pass": (42, 138, 94), "warn": (200, 150, 47), "fail": (200, 75, 47)}[status]
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_fill_color(r, g, b)
+            pdf.set_text_color(255, 255, 255)
+            lbl = "FOUND" if p.get("exists") else ("ERROR" if p.get("verification_status") == "error" else "MISSING")
+            pdf.cell(16, 5, lbl, fill=True, align="C")
+            pdf.set_text_color(13, 13, 13)
+            pdf.set_font("Helvetica", "", 8)
+            extra = ""
+            if p.get("rating"): extra += f" | Rating: {p['rating']}/5"
+            if p.get("review_count"): extra += f" | Reviews: {p['review_count']}"
+            pdf.cell(0, 5, f"  {_safe(p.get('platform', ''))}{_safe(extra)}", ln=True)
+        pdf.ln(3)
+
+    # Site Crawl Summary
+    site_crawl = data.get("site_crawl_result", {})
+    if site_crawl:
+        pages = site_crawl.get("pages", [])
+        _section_header(pdf, f"Site Crawl Summary - {site_crawl.get('pages_crawled', 0)} Pages", _safe)
+        for p in pages:
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(13, 13, 13)
+            pt = _safe(p.get("page_type", "other").replace("_", " ").title())
+            url = _safe(p.get("url", ""), 70)
+            wc = p.get("word_count", 0)
+            pdf.cell(0, 4, f"  [{pt}] {url} ({wc} words)", ln=True)
+        pdf.ln(3)
 
     # GEO Readiness modules
     geo = data.get("geo_report", {})

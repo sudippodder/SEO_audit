@@ -138,6 +138,76 @@ def _serialize_content_quality_report(r) -> dict:
     }
 
 
+def _serialize_external_authority_report(r) -> dict:
+    if r is None: return None
+    return {
+        "external_authority":       _serialize_module_score(r.external_authority),
+        "external_authority_score": r.external_authority_score,
+    }
+
+
+def _serialize_ai_visibility_report(r) -> dict:
+    if r is None: return None
+    d = {
+        "ai_visibility":       _serialize_module_score(r.ai_visibility),
+        "ai_visibility_score": r.ai_visibility_score,
+    }
+    # Include live AI test results if available
+    ai_test = getattr(r, "ai_test_result", None)
+    if ai_test and ai_test.tested:
+        from core.ai_tester import serialize_ai_test_result
+        d["ai_test_result"] = serialize_ai_test_result(ai_test)
+    return d
+
+
+def _serialize_external_validation(ext) -> dict:
+    if ext is None: return None
+    profiles = []
+    for p in ext.profiles:
+        profiles.append({
+            "platform": p.platform,
+            "exists": p.exists,
+            "url": p.url,
+            "rating": p.rating,
+            "review_count": p.review_count,
+            "verification_status": p.verification_status,
+            "error_message": p.error_message,
+            "extra_data": p.extra_data,
+        })
+    return {
+        "profiles": profiles,
+        "profiles_found": ext.profiles_found,
+        "profiles_missing": ext.profiles_missing,
+        "profiles_errored": ext.profiles_errored,
+        "validation_time_ms": ext.validation_time_ms,
+        "knowledge_panel_detected": ext.knowledge_panel_detected,
+        "wikipedia_detected": ext.wikipedia_detected,
+        "wikidata_detected": ext.wikidata_detected,
+        "cached": getattr(ext, "cached", False),
+    }
+
+
+def _serialize_site_crawl(crawl) -> dict:
+    if crawl is None: return None
+    pages_info = []
+    for cp in crawl.pages:
+        pages_info.append({
+            "url": cp.url,
+            "page_type": cp.page_type,
+            "confidence": cp.confidence,
+            "word_count": cp.page.word_count if cp.page else 0,
+            "has_error": bool(cp.page.error) if cp.page else True,
+        })
+    return {
+        "pages": pages_info,
+        "sitemap_found": crawl.sitemap_found,
+        "pages_discovered": crawl.pages_discovered,
+        "pages_crawled": crawl.pages_crawled,
+        "crawl_time_ms": crawl.crawl_time_ms,
+        "errors": crawl.errors,
+    }
+
+
 def _report_to_dict(report) -> dict:
     def _mod(m):
         if m is None: return None
@@ -149,7 +219,7 @@ def _report_to_dict(report) -> dict:
                   for c in m.checks]
         return {"module": m.module, "score": m.score, "checks": checks}
 
-    return {
+    d = {
         "url": report.url, "email": report.email, "keyword": report.keyword,
         "fetch_time_ms": report.fetch_time_ms, "error": report.error,
         "overall_score": report.overall_score, "seo_score": report.seo_score,
@@ -163,6 +233,21 @@ def _report_to_dict(report) -> dict:
         "content_quality_report":  _serialize_content_quality_report(report.content_quality_report),
         "insights": report.insights,
     }
+    # NEW fields — backward compatible (only added if they exist on report)
+    if hasattr(report, "external_authority_report"):
+        d["external_authority_report"] = _serialize_external_authority_report(
+            report.external_authority_report)
+    if hasattr(report, "ai_visibility_report"):
+        d["ai_visibility_report"] = _serialize_ai_visibility_report(
+            report.ai_visibility_report)
+    if hasattr(report, "external_validation"):
+        d["external_validation"] = _serialize_external_validation(
+            report.external_validation)
+    if hasattr(report, "site_crawl_result"):
+        d["site_crawl_result"] = _serialize_site_crawl(report.site_crawl_result)
+    if hasattr(report, "audit_mode"):
+        d["audit_mode"] = report.audit_mode
+    return d
 
 
 def save_audit(report):
