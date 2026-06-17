@@ -10,3 +10,4 @@ plotly>=5.19.0
 bcrypt>=4.1.2
 fpdf2>=2.7.0
 openai>=1.30.0
+playwright>=1.41.0

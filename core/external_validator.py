@@ -146,109 +146,65 @@ def _check_url_exists(url: str, timeout: int = TIMEOUT) -> tuple:
         return None, 0, None
 
 
-def _validate_trustpilot(domain: str) -> ExternalProfile:
-    """Check Trustpilot for business review page."""
-    profile = ExternalProfile(platform="Trustpilot")
-    # Trustpilot URLs: trustpilot.com/review/{domain}
-    clean_domain = domain.replace("www.", "")
-    url = f"https://www.trustpilot.com/review/{clean_domain}"
+def _run_playwright_validator(platform: str, target: str) -> ExternalProfile:
+    import subprocess
+    import os
+    import sys
+    import json
+    
+    profile = ExternalProfile(platform=platform.capitalize())
+    script_path = os.path.join(os.path.dirname(__file__), "playwright_validator.py")
+    
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-        if resp.status_code == 200 and "trustpilot" in resp.text.lower():
-            # Check if it's a real profile page (not a 404 or search redirect)
-            text = resp.text
-            if "reviews" in text.lower() and clean_domain.split(".")[0].lower() in text.lower():
-                profile.exists = True
-                profile.url = url
-                profile.verification_status = "checked"
-                # Try to extract rating
-                rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
-                if rating_match:
-                    try:
-                        profile.rating = float(rating_match.group(1))
-                    except ValueError:
-                        pass
-                # Try to extract review count
-                count_match = re.search(r'"reviewCount"\s*:\s*"?(\d+)"?', text)
-                if count_match:
-                    try:
-                        profile.review_count = int(count_match.group(1))
-                    except ValueError:
-                        pass
-                return profile
-        profile.exists = False
-        profile.verification_status = "checked"
-    except requests.exceptions.Timeout:
+        res = subprocess.run(
+            [sys.executable, script_path, platform, target],
+            capture_output=True,
+            text=True,
+            timeout=45
+        )
+        
+        if res.returncode == 0 and res.stdout.strip():
+            try:
+                data = json.loads(res.stdout.strip())
+                profile.exists = data.get("exists", False)
+                profile.url = data.get("url", "")
+                profile.verification_status = data.get("verification_status", "error")
+                profile.rating = data.get("rating")
+                profile.review_count = data.get("review_count")
+                profile.error_message = data.get("error_message", "")
+            except json.JSONDecodeError:
+                profile.verification_status = "error"
+                profile.error_message = "Failed to parse Playwright script output."
+        else:
+            profile.verification_status = "error"
+            profile.error_message = res.stderr.strip()[:150] or f"{platform.capitalize()} script failed."
+            
+    except subprocess.TimeoutExpired:
         profile.verification_status = "error"
-        profile.error_message = "Timeout connecting to Trustpilot"
+        profile.error_message = f"{platform.capitalize()} script timed out."
     except Exception as e:
         profile.verification_status = "error"
-        profile.error_message = str(e)[:100]
+        profile.error_message = f"{type(e).__name__}: {str(e)}"[:150]
+        
     return profile
 
+def _validate_trustpilot(domain: str) -> ExternalProfile:
+    """Check Trustpilot for business review page."""
+    clean_domain = domain.replace("www.", "")
+    return _run_playwright_validator("trustpilot", clean_domain)
 
 def _validate_clutch(domain: str, brand_name: str) -> ExternalProfile:
     """Check Clutch for company profile."""
-    profile = ExternalProfile(platform="Clutch")
-    # Clutch URLs: clutch.co/profile/{company-name} or search
+    # Clutch profile URL format can be based on brand_name slug or domain name
     slug = brand_name.lower().replace(" ", "-").replace(".", "-")
-    urls_to_try = [
-        f"https://clutch.co/profile/{slug}",
-        f"https://clutch.co/profile/{domain.split('.')[0]}",
-    ]
-    for url in urls_to_try:
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-            if resp.status_code == 200 and "clutch" in resp.text.lower():
-                text = resp.text
-                if "review" in text.lower():
-                    profile.exists = True
-                    profile.url = url
-                    profile.verification_status = "checked"
-                    # Try rating
-                    rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
-                    if rating_match:
-                        try:
-                            profile.rating = float(rating_match.group(1))
-                        except ValueError:
-                            pass
-                    return profile
-        except Exception:
-            continue
-    profile.exists = False
-    profile.verification_status = "checked"
-    return profile
-
+    # To keep it simple, we just pass the slug. The Playwright script can try it.
+    # Note: If it fails, maybe the slug was different. But this is the best heuristic.
+    return _run_playwright_validator("clutch", slug)
 
 def _validate_g2(brand_name: str) -> ExternalProfile:
     """Check G2 for product/company page."""
-    profile = ExternalProfile(platform="G2")
     slug = brand_name.lower().replace(" ", "-")
-    url = f"https://www.g2.com/products/{slug}/reviews"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-        if resp.status_code == 200 and "g2.com" in resp.url:
-            text = resp.text
-            if "review" in text.lower() and brand_name.lower().split()[0] in text.lower():
-                profile.exists = True
-                profile.url = url
-                profile.verification_status = "checked"
-                rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
-                if rating_match:
-                    try:
-                        profile.rating = float(rating_match.group(1))
-                    except ValueError:
-                        pass
-                return profile
-        profile.exists = False
-        profile.verification_status = "checked"
-    except requests.exceptions.Timeout:
-        profile.verification_status = "error"
-        profile.error_message = "Timeout connecting to G2"
-    except Exception as e:
-        profile.verification_status = "error"
-        profile.error_message = str(e)[:100]
-    return profile
+    return _run_playwright_validator("g2", slug)
 
 
 def _validate_crunchbase(brand_name: str) -> ExternalProfile:
@@ -310,15 +266,26 @@ def _validate_youtube(brand_name: str) -> ExternalProfile:
     return profile
 
 
-def _validate_google_business(brand_name: str) -> ExternalProfile:
+def _validate_google_business(brand_name: str, onsite_link: str = None) -> ExternalProfile:
     """Heuristic check for Google Business Profile presence."""
+    from urllib.parse import quote
     profile = ExternalProfile(platform="Google Business")
-    # We cannot directly check GBP without API — use maps search heuristic
-    url = f"https://www.google.com/maps/search/{quote(brand_name)}"
-    profile.url = url
-    profile.verification_status = "heuristic"
-    profile.extra_data["note"] = "Google Business Profile requires manual verification or Google Maps API"
-    return profile
+    
+    if onsite_link:
+        profile.exists = True
+        profile.url = onsite_link
+        profile.verification_status = "checked"
+        profile.extra_data["note"] = "Verified via on-site link"
+        return profile
+    # If no on-site link is found, try to find it using the headless browser search
+    pw_result = _run_playwright_validator("google_business", brand_name)
+    if pw_result:
+        pw_result.platform = "Google Business"
+        return pw_result
+    else:
+        profile.verification_status = "error"
+        profile.error_message = "Playwright validator returned empty result."
+        return profile
 
 
 def _validate_wikipedia(brand_name: str) -> ExternalProfile:
@@ -406,22 +373,24 @@ def _check_onsite_links(
                 list(external_entity_links.values()) + same_as_links
 
     platform_domains = {
-        "Trustpilot": "trustpilot.com",
-        "Clutch": "clutch.co",
-        "G2": "g2.com",
-        "Crunchbase": "crunchbase.com",
-        "LinkedIn": "linkedin.com",
-        "YouTube": "youtube.com",
-        "Wikipedia": "wikipedia.org",
-        "Facebook": "facebook.com",
-        "Twitter": "twitter.com",
-        "Instagram": "instagram.com",
+        "Trustpilot": ["trustpilot.com"],
+        "Clutch": ["clutch.co"],
+        "G2": ["g2.com"],
+        "Crunchbase": ["crunchbase.com"],
+        "LinkedIn": ["linkedin.com"],
+        "YouTube": ["youtube.com"],
+        "Wikipedia": ["wikipedia.org"],
+        "Facebook": ["facebook.com"],
+        "Twitter": ["twitter.com"],
+        "Instagram": ["instagram.com"],
+        "Google Business": ["google.com/maps", "g.page"],
     }
     for link in all_links:
         ll = link.lower()
-        for name, domain in platform_domains.items():
-            if domain in ll and name not in found:
-                found[name] = link
+        for name, domains in platform_domains.items():
+            for domain in domains:
+                if domain in ll and name not in found:
+                    found[name] = link
     return found
 
 
@@ -482,7 +451,7 @@ def validate_external_profiles(
         ("Crunchbase",       lambda: _validate_crunchbase(brand_name)),
         ("LinkedIn",         lambda: _validate_linkedin(brand_name)),
         ("YouTube",          lambda: _validate_youtube(brand_name)),
-        ("Google Business",  lambda: _validate_google_business(brand_name)),
+        ("Google Business",  lambda: _validate_google_business(brand_name, onsite_links.get("Google Business"))),
         ("Wikipedia",        lambda: _validate_wikipedia(brand_name)),
         ("Wikidata",         lambda: _validate_wikidata(brand_name)),
     ]

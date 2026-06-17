@@ -52,7 +52,8 @@ class AuditReport:
 def run_audit(url: str, email: str, keyword: str = "",
               check_broken_links: bool = False,
               full_site: bool = False,
-              openai_api_key: str = "") -> AuditReport:
+              openai_api_key: str = "",
+              progress_callback=None) -> AuditReport:
     """
     Run the GEO audit.
 
@@ -63,7 +64,12 @@ def run_audit(url: str, email: str, keyword: str = "",
         check_broken_links: Whether to check for broken links
         full_site: If True, crawl multiple pages and validate external profiles
         openai_api_key: If provided, run live AI visibility tests via OpenAI
+        progress_callback: Function to call with (percentage, message)
     """
+    def _prog(pct, msg):
+        if progress_callback:
+            progress_callback(pct, msg)
+
     site_crawl = None
     agg_signals = None
     ext_validation = None
@@ -71,6 +77,7 @@ def run_audit(url: str, email: str, keyword: str = "",
 
     if full_site:
         # ── FULL SITE MODE ────────────────────────────────────────────────
+        _prog(5, "Discovering site pages…")
         site_crawl = crawl_site(url)
         if not site_crawl.pages:
             return AuditReport(url=url, email=email, keyword=keyword,
@@ -86,12 +93,14 @@ def run_audit(url: str, email: str, keyword: str = "",
                 overall_score=0, seo_score=0, ai_score=0,
                 overall_grade="Error", overall_color="red", audit_mode="full_site")
 
+        _prog(25, "Aggregating site signals…")
         # Aggregate signals across all pages
         agg_signals = aggregate_signals(site_crawl)
 
         # Create synthetic page with merged signals for scoring modules
         page = create_synthetic_page(agg_signals, homepage)
 
+        _prog(40, "Validating external profiles (Trustpilot, G2, LinkedIn…)")
         # Run external profile validation
         ext_validation = validate_external_profiles(
             domain=page.domain,
@@ -104,6 +113,7 @@ def run_audit(url: str, email: str, keyword: str = "",
         fetch_time = site_crawl.crawl_time_ms
     else:
         # ── SINGLE PAGE MODE (original) ───────────────────────────────────
+        _prog(10, "Fetching page content…")
         page = fetch(url)
         if page.error:
             return AuditReport(url=url, email=email, keyword=keyword,
@@ -111,6 +121,7 @@ def run_audit(url: str, email: str, keyword: str = "",
                 overall_score=0, seo_score=0, ai_score=0,
                 overall_grade="Error", overall_color="red")
 
+        _prog(35, "Validating external profiles (Trustpilot, G2, LinkedIn…)")
         # Even in single-page mode, validate external profiles
         ext_validation = validate_external_profiles(
             domain=page.domain,
@@ -122,20 +133,25 @@ def run_audit(url: str, email: str, keyword: str = "",
         )
         fetch_time = page.fetch_time_ms
 
+    _prog(55, "Analysing SEO and Schema signals…")
     # ── Run all scoring modules ───────────────────────────────────────────
     seo  = seo_score(page, keyword)
     ai   = ai_score(page, keyword)
-    geo  = geo_score(page, legacy_ai_score=ai.score)
     crawl = crawlability_score(page)
     entity = entity_score(page)
     cq   = content_quality_score(page, keyword)
 
+    _prog(65, "Evaluating AI citation readiness (GEO modules)…")
+    geo  = geo_score(page, legacy_ai_score=ai.score)
+
+    _prog(75, "Scoring External Authority…")
     # NEW: External authority + AI visibility
     ext_auth = external_authority_score(ext_validation)
 
     # Run live AI visibility test if API key provided
     brand_name = page.domain.split(".")[0].capitalize()
     if openai_api_key:
+        _prog(85, "🤖 Testing AI visibility with ChatGPT…")
         ai_test_result = run_ai_visibility_test(
             brand_name=brand_name,
             domain=page.domain,
@@ -143,11 +159,15 @@ def run_audit(url: str, email: str, keyword: str = "",
             api_key=openai_api_key,
         )
 
+    _prog(90, "Scoring AI Visibility…")
     ai_vis = ai_visibility_score(page, ext_validation, ai_test_result)
 
     # Optional: broken links check
     if check_broken_links:
+        _prog(92, "Checking broken links…")
         _check_broken_links(page)
+
+    _prog(95, "Calculating final scores…")
 
     # ── Weighted overall score ────────────────────────────────────────────
     if full_site:

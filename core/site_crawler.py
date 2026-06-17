@@ -170,6 +170,7 @@ def _discover_pages(homepage: ParsedPage, base_url: str) -> Dict[str, List[Tuple
     Returns: {page_type: [(url, confidence), ...]}
     """
     candidates: Dict[str, List[Tuple[str, float]]] = {pt: [] for pt in GEO_PRIORITY_TYPES}
+    candidates["other"] = []
     seen_urls: Set[str] = set()
     base_domain = urlparse(base_url).netloc.replace("www.", "")
 
@@ -213,7 +214,7 @@ def _discover_pages(homepage: ParsedPage, base_url: str) -> Dict[str, List[Tuple
     return candidates
 
 
-def crawl_site(url: str, max_pages: int = 12, max_workers: int = 4) -> SiteCrawlResult:
+def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawlResult:
     """
     Crawl key pages of a website for full-site GEO audit.
 
@@ -251,16 +252,32 @@ def crawl_site(url: str, max_pages: int = 12, max_workers: int = 4) -> SiteCrawl
 
     # ── Step 4: Select best candidate per type ────────────────────────────
     urls_to_fetch: List[Tuple[str, str]] = []  # (url, page_type)
+    
+    # First priority: one of each GEO priority type
     for page_type in GEO_PRIORITY_TYPES:
         type_candidates = candidates.get(page_type, [])
         if not type_candidates:
             continue
         # Sort by confidence (highest first), take best
         type_candidates.sort(key=lambda x: x[1], reverse=True)
-        best_url, best_conf = type_candidates[0]
+        best_url, best_conf = type_candidates.pop(0)
         urls_to_fetch.append((best_url, page_type))
         if len(urls_to_fetch) >= max_pages - 1:  # -1 for homepage already fetched
             break
+
+    # If we still have room, add more pages (sorted by confidence)
+    if len(urls_to_fetch) < max_pages - 1:
+        remaining = []
+        for pt, type_candidates in candidates.items():
+            for c_url, conf in type_candidates:
+                remaining.append((c_url, pt, conf))
+        # Sort remaining primarily by confidence
+        remaining.sort(key=lambda x: x[2], reverse=True)
+        
+        for r_url, pt, conf in remaining:
+            if len(urls_to_fetch) >= max_pages - 1:
+                break
+            urls_to_fetch.append((r_url, pt))
 
     # ── Step 5: Fetch pages concurrently ──────────────────────────────────
     def _fetch_page(url_type: Tuple[str, str]) -> Optional[CrawledPage]:

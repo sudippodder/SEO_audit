@@ -358,6 +358,22 @@ def _render_site_crawl_summary(data):
         else:
             coverage_html += f'<span style="display:inline-block;background:#fde8e5;color:#c84b2f;padding:3px 10px;border-radius:4px;margin:2px 4px;font-size:0.82rem;">{icon} {pt.replace("_"," ").title()} ❌</span>'
     st.markdown(f'<div style="margin:8px 0 16px;">{coverage_html}</div>', unsafe_allow_html=True)
+    
+    # ── Critical Crawl Warning (SPA / JS-Heavy detection) ──
+    discovered = crawl.get("pages_discovered", 0)
+    if discovered <= 1:
+        st.markdown(f"""
+        <div style="background:#fff3e0;border-left:4px solid #c8962f;border-radius:6px;padding:16px 20px;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span style="font-size:1.2rem;">⚠️</span>
+                <strong style="font-family:'Syne',sans-serif;font-size:1rem;color:#8a5a00;">Critical AI Crawlability Issue Detected</strong>
+            </div>
+            <div style="font-size:0.88rem;color:#5c3c00;line-height:1.6;">
+                <strong>Only {discovered} page was discovered.</strong> This typically happens when a website is built as a <em>Single Page Application (SPA)</em> using React, Vue, or Angular without <strong>Server-Side Rendering (SSR)</strong>, and lacks a valid <code>sitemap.xml</code>.<br><br>
+                <strong>GEO Impact:</strong> Because your internal links (<code>&lt;a href="..."&gt;</code>) are only rendered via JavaScript after the page loads, simple AI bots (like ChatGPT, Claude, and Perplexity) will see a completely blank page with zero links. They cannot navigate your website to learn about your services. This renders your internal pages effectively invisible to Generative AI engines.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def _render_external_profiles(data):
@@ -854,35 +870,19 @@ if not st.session_state.show_results and not st.session_state.get('view_admin'):
         else:
             norm_url = url_input if url_input.startswith("http") else "https://"+url_input
             prog = st.progress(0); txt = st.empty()
-            if full_site:
-                steps = [
-                    (6,  "Discovering site pages…"),
-                    (18, "Crawling key pages (About, Contact, Services…)"),
-                    (35, "Analysing on-page signals…"),
-                    (48, "Validating external profiles (Trustpilot, G2, LinkedIn…)"),
-                    (60, "Evaluating AI citation readiness…"),
-                    (72, "Scoring GEO readiness modules…"),
-                ]
-                if ai_test_enabled:
-                    steps.append((80, "🤖 Testing AI visibility with ChatGPT…"))
-                steps.extend([
-                    (90, "Checking AI visibility signals…"),
-                    (96, "Calculating combined scores…"),
-                ])
-            else:
-                steps = [(10,"Fetching page content…"),(24,"Parsing HTML structure…"),
-                         (38,"Validating external profiles…"),(50,"Analysing SEO signals…"),
-                         (62,"Evaluating AI citation readiness…"),
-                         (74,"Scoring GEO readiness modules…")]
-                if ai_test_enabled:
-                    steps.append((82, "🤖 Testing AI visibility with ChatGPT…"))
-                steps.append((94,"Calculating scores…"))
-            for pct, msg in steps:
-                txt.markdown(f"**{msg}**"); prog.progress(pct); time.sleep(0.3)
+            
+            def update_progress(pct, msg):
+                txt.markdown(f"**{msg}**")
+                prog.progress(pct)
+                
             api_key = (st.session_state.get('openai_api_key') or os.environ.get('OPENAI_API_KEY', '')) if ai_test_enabled else ''
-            report = run_audit(norm_url, email_input, kw_input.strip(),
-                               check_broken_links=check_broken, full_site=full_site,
-                               openai_api_key=api_key)
+            
+            report = run_audit(
+                norm_url, email_input, kw_input.strip(),
+                check_broken_links=check_broken, full_site=full_site,
+                openai_api_key=api_key,
+                progress_callback=update_progress
+            )
             save_audit(report)
             prog.progress(100); txt.markdown("**Done! Loading your report…**")
             time.sleep(0.3); prog.empty(); txt.empty()

@@ -597,11 +597,11 @@ def check_canonical(page, kw=None):
         return CheckResult("Canonicalization", 2, 3, "warn",
             f"Canonical tag points to a different URL: {page.canonical[:60]}",
             "Canonical pointing elsewhere transfers ranking signals away from this page.",
-            "Verify intent. If this is the primary URL, update canonical to self-reference.", details=details)
+            "**Detailed Fix (AI Suggestion):**<br>1. **Verify Intent:** Ensure that you actually want this page to rank. If the canonical points to a different URL, search engines will index *that* URL instead.<br>2. **Update to Self-Reference:** If this page is the original content, update the `href` attribute in your `<link rel='canonical'>` tag to exactly match this page's URL (`https://...`).<br>3. **Check CMS Settings:** In WordPress (Yoast/RankMath) or Shopify, check the advanced SEO settings on this specific page to ensure the canonical URL hasn't been overridden manually.", details=details)
     return CheckResult("Canonicalization", 1, 3, "warn",
         "No canonical tag found on this page.",
-        "Without canonicalisation, search engines may index duplicate URL variants.",
-        "Add <link rel='canonical' href='https://yourdomain.com/this-page/'> in <head>.")
+        "Without canonicalisation, search engines may index duplicate URL variants (e.g., HTTP vs HTTPS, www vs non-www, or URL parameters).",
+        "**Detailed Fix (AI Suggestion):**<br>1. **Add the Tag:** Insert `<link rel='canonical' href='https://yourdomain.com/exact-page-url/'>` into the `<head>` section of your HTML.<br>2. **Dynamic Generation:** Ensure your CMS or framework dynamically generates this tag for every page so it always points to the clean, parameter-free URL.<br>3. **Avoid Duplicates:** Never place more than one canonical tag on a single page, as search engines will ignore both.")
 
 def check_html_sitemap(page, kw=None):
     if page.has_sitemap_html_link:
