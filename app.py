@@ -11,6 +11,17 @@ from utils.storage import create_user, get_user_by_email, update_user_password, 
 from utils.auth import hash_password, verify_password, generate_temp_password, send_forgot_password_email
 from utils.pdf_export import generate_pdf
 
+@st.cache_resource
+def install_playwright():
+    """Ensure Playwright browsers are installed on Streamlit Cloud."""
+    import subprocess
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print(f"Failed to install Playwright chromium: {e}")
+
+install_playwright()
+
 st.set_page_config(page_title="GEO Readiness Audit", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
