@@ -20,7 +20,7 @@ def install_playwright():
     except Exception as e:
         print(f"Failed to install Playwright chromium: {e}")
 
-#install_playwright()
+install_playwright()
 
 st.set_page_config(page_title="GEO Readiness Audit", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
 
