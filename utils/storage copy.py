@@ -84,6 +84,7 @@ def _report_to_dict(report) -> dict:
         "email":         report.email,
         "fetch_time_ms": report.fetch_time_ms,
         "error":         report.error,
+        "bot_protection_detected": getattr(report, "bot_protection_detected", False),
         "overall_score": report.overall_score,
         "overall_grade": report.overall_grade,
         "overall_color": report.overall_color,

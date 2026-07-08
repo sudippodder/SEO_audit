@@ -1,7 +1,15 @@
+http://14.142.249.85:6367/
+
 seoaudit
 
 conda activate seoaudit
 
+
+https://www.lenovo.com/llms.txt
+
+
+
+AI visibility testing (ChatGPT, Perplexity, Gemini, Claude)
 
 
 
@@ -22,3 +30,35 @@ need to save all the audit reports for further checks.
 pip install requests beautifulsoup4 lxml textstat validators python-dotenv --break-system-packages -q 2>&1 | tail -3
 
 --------------------------------------------------------
+
+
+
+New Requirment:
+
+pip install requests beautifulsoup4 lxml textstat validators python-dotenv -q --break-system-packages 2>&1 | tail -2
+
+
+
+
+
+Edit swrver : https://super-robot-pj64vxw4wx4h9rp6.github.dev/
+
+https://seoaudit-wvyjw7r5buphd3zr2femjm.streamlit.app/
+
+
+
+
+
+python -c "import urllib.request; req = urllib.request.Request('https://www.trustpilot.com/review/virtualemployee.com', headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}); print(urllib.request.urlopen(req).getcode())"
+
+
+------------------------------------------------------
+when i trying with this bebsite link : remoteemployee.ph
+getting the following error : 
+Critical AI Crawlability Issue Detected
+Only 1 page was discovered. This typically happens when a website is built as a Single Page Application (SPA) using React, Vue, or Angular without Server-Side Rendering (SSR), and lacks a valid sitemap.xml.
+
+GEO Impact: Because your internal links (<a href="...">) are only rendered via JavaScript after the page loads, simple AI bots (like ChatGPT, Claude, and Perplexity) will see a completely blank page with zero links. They cannot navigate your website to learn about your services. This renders your internal pages effectively invisible to Generative AI engines.
+
+can we fix this issue? first create implement plan
+------------------------------------------------------

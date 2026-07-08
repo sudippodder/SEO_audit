@@ -58,6 +58,7 @@ class ParsedPage:
     has_llms_txt: bool = False
     robots_ai_directives: dict = field(default_factory=dict)  # {"GPTBot": "allowed"|"blocked"}
     page_render_type: str = "unknown"           # static | ssr-likely | js-heavy
+    is_bot_blocked: bool = False
     schema_raw: list = field(default_factory=list)  # full JSON-LD objects
     organization_schema: dict = field(default_factory=dict)
     has_author_schema: bool = False
@@ -78,29 +79,46 @@ class ParsedPage:
     review_platform_links: dict = field(default_factory=dict)  # {"G2": url, ...}
     press_mention_links: List[str] = field(default_factory=list)
 
-def fetch(url: str) -> "ParsedPage":
+def fetch(url: str, provided_html: Optional[str] = None) -> "ParsedPage":
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     start = time.time()
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+    
+    if provided_html is None:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+            elapsed = int((time.time() - start) * 1000)
+            resp.raise_for_status()
+            html = resp.text
+            status_code = resp.status_code
+            is_https = resp.url.startswith("https://")
+            final_url = resp.url
+            page_size_kb = round(len(resp.content)/1024, 1)
+        except requests.exceptions.Timeout:
+            return ParsedPage(url=url, html="", soup=None, error=f"Timed out after {TIMEOUT}s.", fetch_time_ms=TIMEOUT*1000)
+        except requests.exceptions.ConnectionError:
+            return ParsedPage(url=url, html="", soup=None, error="Connection failed. Check the URL is publicly accessible.")
+        except requests.exceptions.HTTPError as e:
+            return ParsedPage(url=url, html="", soup=None, error=f"HTTP {e.response.status_code}.", status_code=e.response.status_code)
+        except Exception as e:
+            return ParsedPage(url=url, html="", soup=None, error=str(e))
+    else:
         elapsed = int((time.time() - start) * 1000)
-        resp.raise_for_status()
-    except requests.exceptions.Timeout:
-        return ParsedPage(url=url, html="", soup=None, error=f"Timed out after {TIMEOUT}s.", fetch_time_ms=TIMEOUT*1000)
-    except requests.exceptions.ConnectionError:
-        return ParsedPage(url=url, html="", soup=None, error="Connection failed. Check the URL is publicly accessible.")
-    except requests.exceptions.HTTPError as e:
-        return ParsedPage(url=url, html="", soup=None, error=f"HTTP {e.response.status_code}.", status_code=e.response.status_code)
-    except Exception as e:
-        return ParsedPage(url=url, html="", soup=None, error=str(e))
-    html = resp.text
+        html = provided_html
+        status_code = 200
+        is_https = url.startswith("https://")
+        final_url = url
+        page_size_kb = round(len(html.encode('utf-8'))/1024, 1)
+
     soup = BeautifulSoup(html, "lxml")
+    title = soup.title.string.strip() if soup.title and soup.title.string else ""
+    is_bot_blocked = title.lower() in ("access denied", "attention required!", "just a moment...")
+
     page = ParsedPage(url=url, html=html, soup=soup, fetch_time_ms=elapsed,
-        page_size_kb=round(len(resp.content)/1024,1), status_code=resp.status_code,
-        is_https=resp.url.startswith("https://"), final_url=resp.url)
-    _populate(page, soup, resp.url)
-    base = f"{urlparse(resp.url).scheme}://{urlparse(resp.url).netloc}"
+        page_size_kb=page_size_kb, status_code=status_code,
+        is_https=is_https, final_url=final_url, is_bot_blocked=is_bot_blocked)
+    _populate(page, soup, final_url)
+    base = f"{urlparse(final_url).scheme}://{urlparse(final_url).netloc}"
     # robots.txt — AI directives + sitemap
     try:
         rr = requests.get(f"{base}/robots.txt", headers=HEADERS, timeout=5)

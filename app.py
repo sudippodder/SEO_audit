@@ -370,7 +370,22 @@ def _render_site_crawl_summary(data):
             coverage_html += f'<span style="display:inline-block;background:#fde8e5;color:#c84b2f;padding:3px 10px;border-radius:4px;margin:2px 4px;font-size:0.82rem;">{icon} {pt.replace("_"," ").title()} ❌</span>'
     st.markdown(f'<div style="margin:8px 0 16px;">{coverage_html}</div>', unsafe_allow_html=True)
     
-    # ── Critical Crawl Warning (SPA / JS-Heavy detection) ──
+    # ── Critical Crawl Warning (SPA / Bot Protection) ──
+    print(f"DEBUG: crawl result dict: {crawl}")
+    if crawl.get("bot_protection_detected", False):
+        st.markdown(f"""
+        <div style="background:#fff3e0;border-left:4px solid #c8962f;border-radius:6px;padding:16px 20px;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <span style="font-size:1.2rem;">⚠️</span>
+                <strong style="font-family:'Syne',sans-serif;font-size:1rem;color:#8a5a00;">Critical AI Crawlability Issue: Bot Protection Detected</strong>
+            </div>
+            <div style="font-size:0.88rem;color:#5c3c00;line-height:1.6;">
+                <strong>Your website blocked the crawler.</strong> This typically happens when a website uses aggressive Web Application Firewalls (WAF) or Bot Protection (like Akamai or Cloudflare).<br><br>
+                <strong>GEO & SEO Impact:</strong> While bot protection stops malicious scraping, overly aggressive firewall rules often block legitimate AI bots (like ChatGPT, Claude, and Perplexity). If AI crawlers receive an "Access Denied" page instead of your actual content, your brand and services become invisible to Generative AI engines. You should verify your firewall's whitelist rules to ensure AI User-Agents (like GPTBot) are permitted.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
     discovered = crawl.get("pages_discovered", 0)
     if discovered <= 1:
         st.markdown(f"""
@@ -385,6 +400,13 @@ def _render_site_crawl_summary(data):
             </div>
         </div>
         """, unsafe_allow_html=True)
+        
+    with st.expander("View Crawled Pages Details"):
+        if pages:
+            for p in pages:
+                st.markdown(f"- **{p.get('page_type', 'unknown').title()}**: `{p.get('url')}` *(Words: {p.get('word_count', 0)})*")
+        else:
+            st.markdown("No pages crawled.")
 
 
 def _render_external_profiles(data):

@@ -205,6 +205,7 @@ def _serialize_site_crawl(crawl) -> dict:
         "pages_crawled": crawl.pages_crawled,
         "crawl_time_ms": crawl.crawl_time_ms,
         "errors": crawl.errors,
+        "bot_protection_detected": getattr(crawl, "bot_protection_detected", False),
     }
 
 

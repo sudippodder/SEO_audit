@@ -5,13 +5,16 @@ Classifies pages by type (homepage, about, contact, services, blog, case study, 
 Uses concurrent fetching for performance.
 """
 import re
+import sys
 import time
+import asyncio
 import requests
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Set, Tuple
 from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from playwright.sync_api import sync_playwright
 from .fetcher import fetch, ParsedPage, HEADERS, TIMEOUT
 
 
@@ -91,6 +94,7 @@ class SiteCrawlResult:
     pages_crawled: int = 0
     crawl_time_ms: int = 0
     errors: List[str] = field(default_factory=list)
+    bot_protection_detected: bool = False
 
 
 def _classify_url(url: str, base_domain: str) -> Tuple[str, float]:
@@ -228,6 +232,7 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
     result = SiteCrawlResult()
 
     # ── Step 1: Normalize base URL ────────────────────────────────────────
+    url = url.strip().lower()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     parsed = urlparse(url)
@@ -239,6 +244,78 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
         result.errors.append(f"Homepage fetch failed: {homepage.error}")
         result.crawl_time_ms = int((time.time() - start) * 1000)
         return result
+        
+    if homepage.is_bot_blocked:
+        result.bot_protection_detected = True
+
+    # ── CHECK FOR SPA ─────────────────────────────────────────────────────
+    is_spa = homepage.page_render_type == "js-heavy" or (len(homepage.internal_links) < 2 and homepage.script_count > 0)
+    
+    if is_spa:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"]
+            )
+            context = browser.new_context(
+                user_agent=HEADERS["User-Agent"],
+                viewport={"width": 1920, "height": 1080}
+            )
+            pw_page = context.new_page()
+            
+            try:
+                pw_page.goto(url, timeout=30000, wait_until="networkidle")
+            except Exception:
+                pass
+            
+            html = pw_page.content()
+            homepage = fetch(url, provided_html=html)
+            if homepage.is_bot_blocked:
+                result.bot_protection_detected = True
+            
+            result.pages.append(CrawledPage(page=homepage, page_type="homepage", url=url, confidence=1.0))
+            candidates = _discover_pages(homepage, base_url)
+            
+            sitemap_urls = _parse_sitemap(base_url)
+            result.sitemap_found = len(sitemap_urls) > 0
+            result.pages_discovered = sum(len(v) for v in candidates.values()) + 1
+            
+            urls_to_fetch: List[Tuple[str, str]] = []
+            for page_type in GEO_PRIORITY_TYPES:
+                type_candidates = candidates.get(page_type, [])
+                if type_candidates:
+                    type_candidates.sort(key=lambda x: x[1], reverse=True)
+                    best_url, best_conf = type_candidates.pop(0)
+                    urls_to_fetch.append((best_url, page_type))
+                    if len(urls_to_fetch) >= max_pages - 1:
+                        break
+                        
+            if len(urls_to_fetch) < max_pages - 1:
+                remaining = []
+                for pt, type_candidates in candidates.items():
+                    for c_url, conf in type_candidates:
+                        remaining.append((c_url, pt, conf))
+                remaining.sort(key=lambda x: x[2], reverse=True)
+                for r_url, pt, conf in remaining:
+                    if len(urls_to_fetch) >= max_pages - 1:
+                        break
+                    urls_to_fetch.append((r_url, pt))
+            
+            # Fetch candidate pages sequentially using Playwright
+            for fetch_url, ptype in urls_to_fetch:
+                try:
+                    pw_page.goto(fetch_url, timeout=20000, wait_until="networkidle")
+                except Exception:
+                    pass
+                sub_html = pw_page.content()
+                sub_page = fetch(fetch_url, provided_html=sub_html)
+                if not sub_page.error:
+                    result.pages.append(CrawledPage(page=sub_page, page_type=ptype, url=fetch_url))
+            
+            browser.close()
+            result.pages_crawled = len(result.pages)
+            result.crawl_time_ms = int((time.time() - start) * 1000)
+            return result
 
     result.pages.append(CrawledPage(page=homepage, page_type="homepage", url=url, confidence=1.0))
 
