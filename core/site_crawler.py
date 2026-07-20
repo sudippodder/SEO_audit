@@ -11,7 +11,7 @@ import asyncio
 import requests
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Set, Tuple
+from typing import List, Optional, Dict, Set, Tuple, Callable
 from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from playwright.sync_api import sync_playwright
@@ -218,7 +218,7 @@ def _discover_pages(homepage: ParsedPage, base_url: str) -> Dict[str, List[Tuple
     return candidates
 
 
-def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawlResult:
+def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6, progress_callback: Optional[Callable[[str], None]] = None) -> SiteCrawlResult:
     """
     Crawl key pages of a website for full-site GEO audit.
 
@@ -239,6 +239,8 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
     base_url = f"{parsed.scheme}://{parsed.netloc}"
 
     # ── Step 2: Fetch homepage ────────────────────────────────────────────
+    if progress_callback:
+        progress_callback("Fetching homepage...")
     homepage = fetch(url)
     if homepage.error:
         result.errors.append(f"Homepage fetch failed: {homepage.error}")
@@ -302,6 +304,11 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
                     urls_to_fetch.append((r_url, pt))
             
             # Fetch candidate pages sequentially using Playwright
+            if progress_callback:
+                progress_callback(f"Crawling {len(urls_to_fetch)} discovered pages...")
+            
+            completed = 0
+            total = len(urls_to_fetch)
             for fetch_url, ptype in urls_to_fetch:
                 try:
                     pw_page.goto(fetch_url, timeout=20000, wait_until="networkidle")
@@ -311,6 +318,10 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
                 sub_page = fetch(fetch_url, provided_html=sub_html)
                 if not sub_page.error:
                     result.pages.append(CrawledPage(page=sub_page, page_type=ptype, url=fetch_url))
+                
+                completed += 1
+                if progress_callback:
+                    progress_callback(f"Crawled {completed}/{total} internal pages...")
             
             browser.close()
             result.pages_crawled = len(result.pages)
@@ -320,6 +331,8 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
     result.pages.append(CrawledPage(page=homepage, page_type="homepage", url=url, confidence=1.0))
 
     # ── Step 3: Discover candidate pages ──────────────────────────────────
+    if progress_callback:
+        progress_callback("Parsing sitemap and discovering candidate pages...")
     candidates = _discover_pages(homepage, base_url)
 
     # Check if sitemap was found
@@ -367,12 +380,21 @@ def crawl_site(url: str, max_pages: int = 50, max_workers: int = 6) -> SiteCrawl
         except Exception:
             return None
 
+    if progress_callback:
+        progress_callback(f"Crawling {len(urls_to_fetch)} discovered pages...")
+
+    completed = 0
+    total = len(urls_to_fetch)
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_fetch_page, ut): ut for ut in urls_to_fetch}
         for future in as_completed(futures):
             crawled = future.result()
             if crawled:
                 result.pages.append(crawled)
+            completed += 1
+            if progress_callback:
+                progress_callback(f"Crawled {completed}/{total} internal pages...")
 
     result.pages_crawled = len(result.pages)
     result.crawl_time_ms = int((time.time() - start) * 1000)

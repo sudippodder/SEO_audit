@@ -77,8 +77,27 @@ def run_audit(url: str, email: str, keyword: str = "",
 
     if full_site:
         # ── FULL SITE MODE ────────────────────────────────────────────────
-        _prog(5, "Discovering site pages…")
-        site_crawl = crawl_site(url)
+        _prog(5, "Initializing crawler...")
+
+        def _crawl_progress(msg: str):
+            # Map the crawler progress messages to a nice percentage range (5% -> 25%)
+            if "Fetching homepage" in msg:
+                _prog(7, msg)
+            elif "Parsing sitemap" in msg:
+                _prog(10, msg)
+            elif "Crawled" in msg:
+                # E.g., "Crawled 3/10 internal pages..."
+                try:
+                    parts = msg.split()[1].split('/')
+                    c, t = int(parts[0]), int(parts[1])
+                    pct = 10 + int(15 * (c / max(1, t)))
+                    _prog(pct, msg)
+                except Exception:
+                    _prog(15, msg)
+            else:
+                _prog(10, msg)
+
+        site_crawl = crawl_site(url, progress_callback=_crawl_progress)
         if not site_crawl.pages:
             return AuditReport(url=url, email=email, keyword=keyword,
                 fetch_time_ms=0, error="Could not crawl any pages on this site.",
