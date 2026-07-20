@@ -932,6 +932,6 @@ if st.session_state.show_results and st.session_state.report:
         st.error(f"**Could not audit:** {report.error}")
         if st.button("← Try again"): st.session_state.show_results=False; st.session_state.report=None; st.rerun()
         st.stop()
-    st.markdown(f'<div class="hero-badge">GEO Audit Complete — {domain}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero-badge">GEO Audit Complete(Test) — {domain}</div>', unsafe_allow_html=True)
     render_full_report(_report_to_dict(report))
     st.markdown(f'<div style="text-align:center;margin-top:1.5rem;font-size:11px;color:#9a9285;">Audited <strong>{domain}</strong> · GEO scoring is heuristic-based · Results for guidance only</div>', unsafe_allow_html=True)
