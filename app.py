@@ -430,12 +430,12 @@ def _render_external_profiles(data):
             url_link = f" · <a href='{p['url']}' target='_blank' style='color:#2a8a5e;font-size:0.8rem;'>View →</a>" if p.get('url') else ""
             st.markdown(f'<div style="background:#e4f5ec;border:1px solid #c0e0d0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
                         f'{icon} <strong>{p["platform"]}</strong> ✅ Verified{rating}{reviews}{url_link}</div>', unsafe_allow_html=True)
-        elif p.get("verification_status") == "error":
+        elif p.get("verification_status") in ("error", "heuristic"):
+            msg = "Requires manual verification"
+            if p.get("verification_status") == "error":
+                msg = "Blocked by firewall (Check manually)"
             st.markdown(f'<div style="background:#fdf3e0;border:1px solid #e0d0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
-                        f'{icon} <strong>{p["platform"]}</strong> 🔍 Could not verify — {p.get("error_message", "connection issue")}</div>', unsafe_allow_html=True)
-        elif p.get("verification_status") == "heuristic":
-            st.markdown(f'<div style="background:#fdf3e0;border:1px solid #e0d0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
-                        f'{icon} <strong>{p["platform"]}</strong> ⚠️ Requires manual verification</div>', unsafe_allow_html=True)
+                        f'{icon} <strong>{p["platform"]}</strong> ⚠️ {msg}</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div style="background:#fde8e5;border:1px solid #e0b0a0;border-radius:6px;padding:8px 12px;margin-bottom:5px;font-size:0.85rem;">'
                         f'{icon} <strong>{p["platform"]}</strong> ❌ Not detected</div>', unsafe_allow_html=True)

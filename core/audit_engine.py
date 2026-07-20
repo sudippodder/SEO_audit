@@ -100,11 +100,14 @@ def run_audit(url: str, email: str, keyword: str = "",
         # Create synthetic page with merged signals for scoring modules
         page = create_synthetic_page(agg_signals, homepage)
 
+        clean_domain = page.domain[4:] if page.domain.startswith("www.") else page.domain
+        brand_name = clean_domain.split(".")[0].capitalize()
+        
         _prog(40, "Validating external profiles (Trustpilot, G2, LinkedIn…)")
         # Run external profile validation
         ext_validation = validate_external_profiles(
             domain=page.domain,
-            brand_name=page.domain.split(".")[0].capitalize(),
+            brand_name=brand_name,
             social_links=agg_signals.all_social_links,
             review_platform_links=agg_signals.all_review_platform_links,
             external_entity_links=agg_signals.all_external_entity_links,
@@ -123,9 +126,12 @@ def run_audit(url: str, email: str, keyword: str = "",
 
         _prog(35, "Validating external profiles (Trustpilot, G2, LinkedIn…)")
         # Even in single-page mode, validate external profiles
+        clean_domain_single = page.domain[4:] if page.domain.startswith("www.") else page.domain
+        brand_name_single = clean_domain_single.split(".")[0].capitalize()
+        
         ext_validation = validate_external_profiles(
             domain=page.domain,
-            brand_name=page.domain.split(".")[0].capitalize(),
+            brand_name=brand_name_single,
             social_links=page.social_links,
             review_platform_links=page.review_platform_links,
             external_entity_links=page.external_entity_links,

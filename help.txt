@@ -62,3 +62,56 @@ GEO Impact: Because your internal links (<a href="...">) are only rendered via J
 
 can we fix this issue? first create implement plan
 ------------------------------------------------------
+
+With Naukri.com, previously it was crowling at least one page, but right now showing the following error without crowling.
+
+Critical AI Crawlability Issue: Bot Protection Detected
+Your website blocked the crawler. This typically happens when a website uses aggressive Web Application Firewalls (WAF) or Bot Protection (like Akamai or Cloudflare).
+
+GEO & SEO Impact: While bot protection stops malicious scraping, overly aggressive firewall rules often block legitimate AI bots (like ChatGPT, Claude, and Perplexity). If AI crawlers receive an "Access Denied" page instead of your actual content, your brand and services become invisible to Generative AI engines. You should verify your firewall's whitelist rules to ensure AI User-Agents (like GPTBot) are permitted.
+
+
+-------------------------------------------------------------------
+I am checking with naukri.com :
+on External Profile Validation
+Trustpilot : showing fine
+Clutch : showing verified but actual link goes to 404 page 
+G2 : showing verified but actual link goes to : https://www.g2.com/products/naukri/reviews but orginal link is https://www.g2.com/products/naukri-com/reviews
+Crunchbase : showing not detected , but that is exist : https://www.crunchbase.com/organization/naukri-com
+LinkedIn : working
+YouTube : working
+Google Business : working
+Wikipedia : working
+Wikidata :showing not detected but that already exist https://www.wikidata.org/wiki/Q3411142
+
+Please check all and build implementation guide
+--------------------------------------------------------
+I am checking with naukri.com :
+Clutch : showing verified after crawling  
+but when click on view profile actual link goes to 404 page 
+and website is not verified with Clutch
+
+
+External Profile Validation — 6/9 Detected
+
+with naukri.com : Crunchbase is verified with https://www.crunchbase.com/organization/naukri-com
+but app return the following result
+Crunchbase 🔍 Could not verify — Could not verify Crunchbase profile
+
+-------------------------------------------------------
+
+when I checking with remoteemployee.ph:
+G2 : showing verified but actual link goes to 404 page 
+and url is https://www.g2.com/products/remoteemployee-ph/reviews
+
+-------------------------------------------------------
+I will just check with different domain which are verified or not with the following site :
+G2 ,Clutch and Crunchbase
+
+
+------------------------------------------------
+
+I think we need to simplify our app.
+after upload the story we need analysis area > here analysis will be done. all scene and details will generate by agent or template (this is a part, after completed this part we can access next part )
+next part will be the character generation(same like first one.) I want to show here what model or api we are using , we can see here(for all section).
+next scene and them video generation and merge.

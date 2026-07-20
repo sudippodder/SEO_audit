@@ -55,48 +55,73 @@ def check(platform, target):
                             except ValueError: pass
 
                 elif platform == "clutch":
-                    # target is the slug (e.g. valuecoders)
-                    slug = target.lower().replace(" ", "-").replace(".", "-")
-                    url = f"https://clutch.co/profile/{slug}"
-                    result["url"] = url
-                    
-                    # Bypass CF
-                    page.goto(url, timeout=30000)
-                    try:
-                        page.wait_for_function('() => !document.title.includes("Just a moment")', timeout=15000)
-                        page.wait_for_timeout(2000)
-                    except Exception:
-                        pass
+                    slugs = target.split(",")
+                    for s in slugs:
+                        slug = s.strip().lower()
+                        if not slug: continue
+                        url = f"https://clutch.co/profile/{slug}"
+                        result["url"] = url
                         
-                    text = page.content()
-                    if "clutch" in text.lower() and "review" in text.lower():
-                        result["exists"] = True
-                        rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
-                        if rating_match:
-                            try: result["rating"] = float(rating_match.group(1))
-                            except ValueError: pass
-
-                elif platform == "g2":
-                    slug = target.lower().replace(" ", "-")
-                    url = f"https://www.g2.com/products/{slug}/reviews"
-                    result["url"] = url
-                    
-                    # Bypass CF
-                    page.goto(url, timeout=30000)
-                    try:
-                        page.wait_for_function('() => !document.title.includes("Just a moment")', timeout=15000)
-                        page.wait_for_timeout(2000)
-                    except Exception:
-                        pass
-                        
-                    if "g2.com" in page.url:
+                        # Bypass CF
+                        response = page.goto(url, timeout=30000)
+                        try:
+                            page.wait_for_function('() => !document.title.includes("Just a moment")', timeout=15000)
+                            page.wait_for_timeout(2000)
+                        except Exception:
+                            pass
+                            
+                        title = page.title()
+                        if response and response.status in (401, 403, 429):
+                            result["exists"] = None
+                            result["verification_status"] = "error"
+                            result["error_message"] = "WAF Blocked"
+                            break
+                        if "404" in title or "Not Found" in title or (response and response.status == 404):
+                            continue
+                            
                         text = page.content()
-                        if "review" in text.lower():
+                        if "clutch" in text.lower() and "review" in text.lower():
                             result["exists"] = True
                             rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
                             if rating_match:
                                 try: result["rating"] = float(rating_match.group(1))
                                 except ValueError: pass
+                            break
+
+                elif platform == "g2":
+                    slugs = target.split(",")
+                    for s in slugs:
+                        slug = s.strip().lower()
+                        if not slug: continue
+                        url = f"https://www.g2.com/products/{slug}/reviews"
+                        result["url"] = url
+                        
+                        # Bypass CF
+                        response = page.goto(url, timeout=30000)
+                        try:
+                            page.wait_for_function('() => !document.title.includes("Just a moment")', timeout=15000)
+                            page.wait_for_timeout(2000)
+                        except Exception:
+                            pass
+                            
+                        title = page.title()
+                        if response and response.status in (401, 403, 429):
+                            result["exists"] = None
+                            result["verification_status"] = "error"
+                            result["error_message"] = "WAF Blocked"
+                            break
+                        if "404" in title or "Not Found" in title or (response and response.status == 404):
+                            continue
+                            
+                        if "g2.com" in page.url:
+                            text = page.content()
+                            if "review" in text.lower():
+                                result["exists"] = True
+                                rating_match = re.search(r'"ratingValue"\s*:\s*"?([\d.]+)"?', text)
+                                if rating_match:
+                                    try: result["rating"] = float(rating_match.group(1))
+                                    except ValueError: pass
+                                break
 
                 elif platform == "google_business":
                     from urllib.parse import quote

@@ -194,11 +194,16 @@ def _populate(page, soup, base_url):
             data = json.loads(script.string or "")
             items = [data] if isinstance(data, dict) else data
             for item in items:
-                if isinstance(item, dict) and item.get("@type"):
-                    t = item["@type"]
-                    st = t if isinstance(t, str) else t[0]
-                    page.schema_types.append(st)
-                    if "faq" in st.lower(): page.has_faq_schema = True
+                if isinstance(item, dict):
+                    nodes = [item]
+                    if "@graph" in item and isinstance(item["@graph"], list):
+                        nodes.extend([n for n in item["@graph"] if isinstance(n, dict)])
+                    for node in nodes:
+                        if node.get("@type"):
+                            t = node["@type"]
+                            st = t if isinstance(t, str) else t[0]
+                            page.schema_types.append(st)
+                            if "faq" in st.lower(): page.has_faq_schema = True
         except: pass
 
     page.has_favicon = bool(soup.find("link", rel=lambda r: r and ("icon" in (" ".join(r) if isinstance(r,list) else r).lower())))
@@ -212,7 +217,7 @@ def _populate(page, soup, base_url):
     page.http_requests_approx = page.image_count + page.script_count + page.stylesheet_count
 
     # FAQ / summary sections
-    faq_kws = ["faq","frequently asked","common questions","q&a","questions and answers"]
+    faq_kws = ["faq","frequently asked","common questions","q&a","questions and answers", "f.a.q", "f-a-q"]
     summary_kws = ["summary","tl;dr","tldr","key takeaways","in short","in conclusion","bottom line","overview","recap"]
     full_lower = page.full_text.lower()
     page.has_faq_section = page.has_faq_schema or any(k in full_lower for k in faq_kws) or \
@@ -263,24 +268,43 @@ def _parse_ai_directives(robots_txt: str) -> dict:
     directives = {}
     lines = robots_txt.splitlines()
     current_agents = []
+    last_was_agent = False
+    
     for line in lines:
-        line = line.strip()
+        line = line.split('#')[0].strip()
+        if not line:
+            continue
+            
         if line.lower().startswith("user-agent:"):
             agent = line.split(":", 1)[1].strip()
-            current_agents = [agent]
-        elif line.lower().startswith("disallow:") and current_agents:
+            if not last_was_agent:
+                current_agents = []
+            current_agents.append(agent)
+            last_was_agent = True
+        elif line.lower().startswith("disallow:"):
+            last_was_agent = False
+            if not current_agents:
+                continue
+            val = line.split(":", 1)[1].strip()
+            for a in current_agents:
+                if a == "*":
+                    if val == "/":
+                        for bot in AI_BOTS:
+                            directives[bot] = directives.get(bot, "blocked")
+                else:
+                    for bot in AI_BOTS:
+                        if bot.lower() == a.lower():
+                            if val in ("/", ""):
+                                directives[bot] = directives.get(bot, "blocked" if val == "/" else "allowed")
+        elif line.lower().startswith("allow:"):
+            last_was_agent = False
+            if not current_agents:
+                continue
             val = line.split(":", 1)[1].strip()
             for a in current_agents:
                 for bot in AI_BOTS:
-                    if bot.lower() == a.lower() or a == "*":
-                        if val in ("/", ""):
-                            directives[bot] = directives.get(bot, "blocked" if val == "/" else "allowed")
-        elif line.lower().startswith("allow:") and current_agents:
-            val = line.split(":", 1)[1].strip()
-            if val == "/":
-                for a in current_agents:
-                    for bot in AI_BOTS:
-                        if bot.lower() == a.lower():
+                    if bot.lower() == a.lower():
+                        if val == "/":
                             directives[bot] = "allowed"
     return directives
 
@@ -296,6 +320,8 @@ def _extract_schema_signals(page, soup):
             for item in items:
                 if isinstance(item, dict):
                     raw.append(item)
+                    if "@graph" in item and isinstance(item["@graph"], list):
+                        raw.extend([n for n in item["@graph"] if isinstance(n, dict)])
         except: pass
     page.schema_raw = raw
     for item in raw:

@@ -135,10 +135,16 @@ def _check_url_exists(url: str, timeout: int = TIMEOUT) -> tuple:
         resp = requests.head(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         if resp.status_code < 400:
             return True, resp.status_code, None
+        if resp.status_code in (401, 403, 429):
+            return None, resp.status_code, None
+            
         # Some platforms block HEAD — try GET
         resp = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         if resp.status_code < 400:
             return True, resp.status_code, resp.text[:5000]
+        if resp.status_code in (401, 403, 429):
+            return None, resp.status_code, None
+            
         return False, resp.status_code, None
     except requests.exceptions.Timeout:
         return None, 0, None  # None = could not verify
@@ -195,34 +201,41 @@ def _validate_trustpilot(domain: str) -> ExternalProfile:
 
 def _validate_clutch(domain: str, brand_name: str) -> ExternalProfile:
     """Check Clutch for company profile."""
-    # Clutch profile URL format can be based on brand_name slug or domain name
-    slug = brand_name.lower().replace(" ", "-").replace(".", "-")
-    # To keep it simple, we just pass the slug. The Playwright script can try it.
-    # Note: If it fails, maybe the slug was different. But this is the best heuristic.
-    return _run_playwright_validator("clutch", slug)
+    domain_slug = domain.lower().replace(".", "-")
+    brand_slug = brand_name.lower().replace(" ", "-").replace(".", "-")
+    target = f"{domain_slug},{brand_slug}"
+    return _run_playwright_validator("clutch", target)
 
-def _validate_g2(brand_name: str) -> ExternalProfile:
+def _validate_g2(domain: str, brand_name: str) -> ExternalProfile:
     """Check G2 for product/company page."""
-    slug = brand_name.lower().replace(" ", "-")
-    return _run_playwright_validator("g2", slug)
+    domain_slug = domain.lower().replace(".", "-")
+    brand_slug = brand_name.lower().replace(" ", "-")
+    target = f"{domain_slug},{brand_slug}"
+    return _run_playwright_validator("g2", target)
 
 
-def _validate_crunchbase(brand_name: str) -> ExternalProfile:
+def _validate_crunchbase(domain: str, brand_name: str) -> ExternalProfile:
     """Check Crunchbase for organization profile."""
     profile = ExternalProfile(platform="Crunchbase")
-    slug = brand_name.lower().replace(" ", "-")
-    url = f"https://www.crunchbase.com/organization/{slug}"
-    exists, status, _ = _check_url_exists(url)
-    if exists:
-        profile.exists = True
-        profile.url = url
-        profile.verification_status = "checked"
-    elif exists is None:
-        profile.verification_status = "error"
-        profile.error_message = "Could not verify Crunchbase profile"
-    else:
-        profile.exists = False
-        profile.verification_status = "checked"
+    domain_slug = domain.lower().replace(".", "-")
+    brand_slug = brand_name.lower().replace(" ", "-")
+    slugs_to_try = [domain_slug, brand_slug]
+    
+    for slug in slugs_to_try:
+        url = f"https://www.crunchbase.com/organization/{slug}"
+        exists, status, _ = _check_url_exists(url)
+        if exists:
+            profile.exists = True
+            profile.url = url
+            profile.verification_status = "checked"
+            return profile
+        elif exists is None:
+            profile.verification_status = "error"
+            profile.error_message = "Could not verify Crunchbase profile"
+            return profile
+            
+    profile.exists = False
+    profile.verification_status = "checked"
     return profile
 
 
@@ -340,7 +353,7 @@ def _validate_wikidata(brand_name: str) -> ExternalProfile:
                     if any(kw in desc for kw in [
                         "company", "organization", "software", "enterprise", "firm",
                         "agency", "platform", "service", "startup", "business",
-                        "corporation", "technology", "inc", "ltd",
+                        "corporation", "technology", "inc", "ltd", "website", "portal",
                     ]):
                         profile.exists = True
                         profile.url = f"https://www.wikidata.org/wiki/{r['id']}"
@@ -447,8 +460,8 @@ def validate_external_profiles(
     validators = [
         ("Trustpilot",       lambda: _validate_trustpilot(clean_domain)),
         ("Clutch",           lambda: _validate_clutch(clean_domain, brand_name)),
-        ("G2",               lambda: _validate_g2(brand_name)),
-        ("Crunchbase",       lambda: _validate_crunchbase(brand_name)),
+        ("G2",               lambda: _validate_g2(clean_domain, brand_name)),
+        ("Crunchbase",       lambda: _validate_crunchbase(clean_domain, brand_name)),
         ("LinkedIn",         lambda: _validate_linkedin(brand_name)),
         ("YouTube",          lambda: _validate_youtube(brand_name)),
         ("Google Business",  lambda: _validate_google_business(brand_name, onsite_links.get("Google Business"))),
@@ -461,7 +474,10 @@ def validate_external_profiles(
             profile = validator_fn()
             # Enrich with on-site link if we found one
             if platform_name in onsite_links and not profile.exists:
-                profile.extra_data["onsite_link"] = onsite_links[platform_name]
+                profile.exists = True
+                profile.url = onsite_links[platform_name]
+                profile.verification_status = "checked"
+                profile.extra_data["note"] = "Verified via website link"
                 profile.extra_data["onsite_detected"] = True
             elif platform_name in onsite_links and profile.exists:
                 profile.extra_data["onsite_link"] = onsite_links[platform_name]
