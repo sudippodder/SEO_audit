@@ -191,7 +191,12 @@ def _populate(page, soup, base_url):
 
     for script in soup.find_all("script", type="application/ld+json"):
         try:
-            data = json.loads(script.string or "")
+            content = script.string
+            if not content:
+                content = script.text
+            if not content:
+                continue
+            data = json.loads(content)
             items = [data] if isinstance(data, dict) else data
             for item in items:
                 if isinstance(item, dict):
@@ -315,7 +320,12 @@ def _extract_schema_signals(page, soup):
     raw = []
     for script in soup.find_all("script", type="application/ld+json"):
         try:
-            data = json.loads(script.string or "")
+            content = script.string
+            if not content:
+                content = script.text
+            if not content:
+                continue
+            data = json.loads(content)
             items = data if isinstance(data, list) else [data]
             for item in items:
                 if isinstance(item, dict):
