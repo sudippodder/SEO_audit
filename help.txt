@@ -119,3 +119,12 @@ I think we need to simplify our app.
 after upload the story we need analysis area > here analysis will be done. all scene and details will generate by agent or template (this is a part, after completed this part we can access next part )
 next part will be the character generation(same like first one.) I want to show here what model or api we are using , we can see here(for all section).
 next scene and them video generation and merge.
+
+
+------------------------------------------------
+
+I want to extend the app inGEO audit.
+
+I need api service for the website audit process.
+Where I will provide the domain name and it will return the audit report as a pdf link and json file.
+
