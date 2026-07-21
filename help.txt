@@ -4,6 +4,10 @@ seoaudit
 
 conda activate seoaudit
 
+git pull --no-rebase origin main
+
+git fetch
+git reset --hard origin/main
 
 https://www.lenovo.com/llms.txt
 
